@@ -4,6 +4,10 @@ Peek 是 macOS 的文件预览工具。图片、PDF、Markdown 和 HTML 先出�
 
 需要 macOS 26 或更新版本。Mac 接收端支持 Apple Silicon / Intel，远程发送端支持 Linux / macOS 的 amd64 / arm64；无需账号或中继服务。
 
+<p align="center">
+  <img src="docs/screenshots/file-card.jpg" alt="远程 HTML 和图片到达 Peek 浮动卡片" width="520">
+</p>
+
 ## 下载
 
 从 [GitHub Releases](https://github.com/terryops/peek/releases/latest) 下载 `Peek-universal.zip`，解压后将 `Peek.app` 放入「应用程序」并双击打开。Peek 在菜单栏运行，没有 Dock 图标。分发的 Mac App 已完成 Developer ID 签名和 Apple 公证。
@@ -41,6 +45,8 @@ Claude Code 会话里不用改习惯：`open x.png / x.pdf / x.md / x.html`、`o
 
 ## 查看器
 
+<img src="docs/screenshots/document-viewer.jpg" alt="Peek 中的 Markdown 文档查看器" width="800">
+
 - 图片：双击 适应 ↔ 1:1 像素，捏合 / ⌘± 缩放，← → 切换，底部缩略图条；多张可「并排对比」
 - 外接屏上打开多张图片时默认并排对比；可用工具栏或 ⌘D 切回单张。单张查看时，鼠标滚轮向上 / 向下切换上一张 / 下一张图片（循环）；放大图片、PDF 和网页仍正常滚动
 - 详情窗口：双指左滑下一张、右滑上一张（同一卡片内循环切换），拖动跟手、松手滑入、短滑或取消回弹；上下滑动仍滚动文档，图片 / PDF 放大后、网页含横向滚动内容时保留横向滚动
@@ -59,6 +65,8 @@ Claude Code 会话里不用改习惯：`open x.png / x.pdf / x.md / x.html`、`o
 - 调参：`defaults write com.terryops.peek lingerSeconds -float 300`、`maxCards -int 3`、`style rich|compact|photo`、`stacking deck|list`
 
 ## 远程机器
+
+<img src="docs/screenshots/remote-settings.jpg" alt="Peek 原生 SSH 远程机器连接窗口" width="640">
 
 菜单栏 →「远程机器…」→ 输入 SSH 主机 →「连接」。连接后拷贝命令，在远程终端末尾加文件路径即可推回本机。沿用系统 SSH 配置、密钥和跳板机；未知指纹与密码使用原生验证窗口。无需中继服务或 Mac 入站端口。
 
