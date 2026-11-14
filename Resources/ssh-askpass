@@ -1,0 +1,3 @@
+#!/bin/sh
+# Credentials travel only over SSH's askpass pipe, never through files.
+exec "$PEEK_EXECUTABLE" --ssh-askpass "$@"

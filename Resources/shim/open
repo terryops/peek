@@ -1,0 +1,41 @@
+#!/bin/bash
+# Claude Code 会话里的 open 替身：打开图片 / PDF / Markdown / HTML 文件改成推到 Peek 卡片，
+# 其余一律原样交给 /usr/bin/open。PEEK_OFF=1 可临时关掉。
+REAL=/usr/bin/open
+PEEK="$HOME/Applications/Peek.app/Contents/MacOS/Peek"
+[[ -x "$PEEK" && -z "${PEEK_OFF:-}" ]] || exec "$REAL" "$@"
+
+shopt -s nocasematch
+files=()
+args=("$@")
+n=${#args[@]}
+i=0
+while (( i < n )); do
+    a=${args[i]}
+    case "$a" in
+        -a)
+            app=${args[i+1]:-}
+            case "$app" in
+                Preview|Preview.app|*/Preview.app) i=$((i+2)); continue ;;
+                *) exec "$REAL" "$@" ;;
+            esac ;;
+        -b)
+            [[ "${args[i+1]:-}" == com.apple.Preview ]] || exec "$REAL" "$@"
+            i=$((i+2)); continue ;;
+        -g|-F|-n|-j|--background|--fresh|--new|--hide) ;;
+        --) i=$((i+1)); while (( i < n )); do files+=("${args[i]}"); i=$((i+1)); done; break ;;
+        -*) exec "$REAL" "$@" ;;
+        *) files+=("$a") ;;
+    esac
+    i=$((i+1))
+done
+
+(( ${#files[@]} )) || exec "$REAL" "$@"
+for f in "${files[@]}"; do
+    [[ -f "$f" ]] || exec "$REAL" "$@"
+    case "${f##*.}" in
+        png|jpg|jpeg|gif|webp|heic|heif|tif|tiff|bmp|avif|svg|pdf|md|markdown|html|htm) ;;
+        *) exec "$REAL" "$@" ;;
+    esac
+done
+"$PEEK" -- "${files[@]}" || exec "$REAL" "$@"
