@@ -7,7 +7,7 @@
 [**下载 Mac 通用版**](https://github.com/terryops/peek/releases/latest) · macOS 26+（Apple Silicon / Intel）· 已签名与公证 · [MIT License](LICENSE)
 
 <p align="center">
-  <img src="docs/screenshots/demo.gif" alt="Peek 演示：AI Agent 不抢终端焦点推送右上角浮动卡片，点击并排对比，按 Esc 直接继续输入" width="840">
+  <img src="docs/screenshots/demo.gif" alt="Peek 演示：AI Agent 不抢对话焦点推送右上角浮动卡片，点击并排对比，按 Esc 直接回到聊天框继续输入" width="840">
 </p>
 
 ## 1. 一次性准备

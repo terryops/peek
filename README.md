@@ -7,7 +7,7 @@ Native macOS floating preview cards for AI Agents (Claude Code, Codex, Cursor, W
 [**Download Universal Mac App**](https://github.com/terryops/peek/releases/latest) · macOS 26+ (Apple Silicon & Intel) · Signed & Notarized · [MIT License](LICENSE)
 
 <p align="center">
-  <img src="docs/screenshots/demo.gif" alt="Peek demo: an AI agent pushes files to a top-right floating card without stealing terminal focus, opens side-by-side comparison on click, and returns focus on Esc" width="840">
+  <img src="docs/screenshots/demo.gif" alt="Peek demo: an AI agent pushes files to a top-right floating card without stealing focus from the chat window, opens side-by-side comparison on click, and returns focus on Esc" width="840">
 </p>
 
 ## 1. One-Time Setup
