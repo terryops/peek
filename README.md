@@ -7,7 +7,7 @@ Native macOS file previews for terminal, SSH, and AI agent workflows. Incoming *
 [**Download Universal Mac App**](https://github.com/terryops/peek/releases/latest) · macOS 26+ (Apple Silicon & Intel) · Signed & Notarized · [MIT License](LICENSE)
 
 <p align="center">
-  <img src="docs/screenshots/floating-card.png" alt="Peek floating card deck in the top-right corner while the terminal keeps focus" width="840">
+  <img src="docs/screenshots/demo.gif" alt="Peek demo: push files to a floating card without losing terminal focus, click to inspect side-by-side, press Esc to keep typing" width="840">
 </p>
 
 ## Why Peek

@@ -7,7 +7,7 @@
 [**下载 Mac 通用版**](https://github.com/terryops/peek/releases/latest) · macOS 26+（Apple Silicon / Intel）· 已签名与公证 · [MIT License](LICENSE)
 
 <p align="center">
-  <img src="docs/screenshots/floating-card.png" alt="终端保持焦点的同时，文件到达右上角 Peek 浮动卡片堆叠" width="840">
+  <img src="docs/screenshots/demo.gif" alt="Peek 演示：终端不失焦推送右上角浮动卡片，点击打开并排对比，按 Esc 直接继续输入" width="840">
 </p>
 
 ## 为什么用 Peek
