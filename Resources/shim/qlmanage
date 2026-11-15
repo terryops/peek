@@ -1,8 +1,16 @@
 #!/bin/bash
 # qlmanage 替身：只接管 `qlmanage -p 文件…`（快速查看弹窗），其他用法原样放行。
 REAL=/usr/bin/qlmanage
-PEEK="$HOME/Applications/Peek.app/Contents/MacOS/Peek"
-[[ -x "$PEEK" && -z "${PEEK_OFF:-}" && "${1:-}" == "-p" ]] || exec "$REAL" "$@"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+PEEK=""
+for candidate in \
+    "${SELF_DIR:+$SELF_DIR/../../MacOS/Peek}" \
+    "/Applications/Peek.app/Contents/MacOS/Peek" \
+    "$HOME/Applications/Peek.app/Contents/MacOS/Peek"
+do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then PEEK="$candidate"; break; fi
+done
+[[ -n "$PEEK" && -z "${PEEK_OFF:-}" && "${1:-}" == "-p" ]] || exec "$REAL" "$@"
 shift
 files=()
 for a in "$@"; do

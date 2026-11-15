@@ -177,8 +177,13 @@ enum CLI {
             let app = candidate.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             if app.pathExtension == "app" { return app }
         }
-        let installed = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Peek.app")
-        return FileManager.default.fileExists(atPath: installed.path) ? installed : nil
+        for dir in [
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Peek.app"),
+            URL(fileURLWithPath: "/Applications/Peek.app"),
+        ] where FileManager.default.fileExists(atPath: dir.path) {
+            return dir
+        }
+        return nil
     }
 
     // The marker is written before launching. A notification handles an already

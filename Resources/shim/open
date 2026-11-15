@@ -2,8 +2,16 @@
 # Claude Code 会话里的 open 替身：打开图片 / PDF / Markdown / HTML 文件改成推到 Peek 卡片，
 # 其余一律原样交给 /usr/bin/open。PEEK_OFF=1 可临时关掉。
 REAL=/usr/bin/open
-PEEK="$HOME/Applications/Peek.app/Contents/MacOS/Peek"
-[[ -x "$PEEK" && -z "${PEEK_OFF:-}" ]] || exec "$REAL" "$@"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+PEEK=""
+for candidate in \
+    "${SELF_DIR:+$SELF_DIR/../../MacOS/Peek}" \
+    "/Applications/Peek.app/Contents/MacOS/Peek" \
+    "$HOME/Applications/Peek.app/Contents/MacOS/Peek"
+do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then PEEK="$candidate"; break; fi
+done
+[[ -n "$PEEK" && -z "${PEEK_OFF:-}" ]] || exec "$REAL" "$@"
 
 shopt -s nocasematch
 files=()

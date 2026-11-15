@@ -1,113 +1,102 @@
 # Peek
 
-English · [简体中文](README.zh-CN.md)
+English · [简体中文](README.zh-CN.md) · [Manual Usage & Shortcuts](docs/manual-usage.md)
 
-Native macOS file previews for terminal, SSH, and AI agent workflows. Incoming **images, PDFs, Markdown, and HTML** appear as non-activating floating cards in the top-right corner of your screen—click a card when you are ready to inspect it in Peek's built-in viewer, and press `Esc` to return right where you were typing.
+Native macOS floating preview cards for AI Agents (Claude Code, Codex, Cursor, Windsurf, OpenClaw, etc.). Instead of popping up Preview or a browser and stealing your keyboard focus—or leaving bare file paths in chat—agents push **images, PDFs, Markdown, and HTML** to non-activating cards in the top-right corner of your screen. Click a card when you are ready to inspect it, press `Esc` to return right where you were typing, or press `↩` to jump straight back to the agent session that sent it.
 
 [**Download Universal Mac App**](https://github.com/terryops/peek/releases/latest) · macOS 26+ (Apple Silicon & Intel) · Signed & Notarized · [MIT License](LICENSE)
 
 <p align="center">
-  <img src="docs/screenshots/demo.gif" alt="Peek demo: push files to a floating card without losing terminal focus, click to inspect side-by-side, press Esc to keep typing" width="840">
+  <img src="docs/screenshots/demo.gif" alt="Peek demo: an AI agent pushes files to a top-right floating card without stealing terminal focus, opens side-by-side comparison on click, and returns focus on Esc" width="840">
 </p>
 
-## Why Peek
+## 1. One-Time Setup
 
-- **Never steals focus** — Floating cards stay above all Spaces and full-screen apps without interrupting your active window. Peek runs in the menu bar with no Dock icon, and closing the viewer hands focus straight back.
-- **Self-contained snapshots** — Local files are cloned instantly on APFS with zero extra disk space. Relative CSS, JS, and images referenced by Markdown or HTML are bundled with the card, so overwriting a screenshot or build report later never alters an earlier preview.
-- **Zero-relay SSH forwarding** — Push files from remote Linux or macOS machines (`amd64` / `arm64`) over your existing `/usr/bin/ssh` setup (`~/.ssh/config`, keys, agent, JumpHosts). No accounts, cloud relays, or inbound ports on your Mac.
-- **Standalone or agent-ready** — Local CLI and SSH forwarding work independently out of the box, and integrate cleanly with scripts, terminals, and AI coding agents.
-
-## Install
+### On your Mac
 
 1. Download `Peek-universal.zip` from [GitHub Releases](https://github.com/terryops/peek/releases/latest), move `Peek.app` into `/Applications`, and open it.
-2. *(Optional, for local CLI)* Link `peek` onto your `PATH`:
+2. Link `peek` onto your `PATH` so local agents can invoke it directly:
 
 ```sh
 mkdir -p "$HOME/bin"
 ln -sfn "/Applications/Peek.app/Contents/MacOS/Peek" "$HOME/bin/peek"
 ```
 
-Ensure `$HOME/bin` is in your shell `PATH` (for example, `export PATH="$HOME/bin:$PATH"` in `~/.zprofile`).
+Make sure `$HOME/bin` is in your shell `PATH` (for example, `export PATH="$HOME/bin:$PATH"` in `~/.zprofile`).
 
-## Quick Start
+### On remote SSH servers *(optional)*
 
-### Local CLI
+If your agents run on remote Linux or macOS machines (`amd64` / `arm64`), click the Peek menu bar icon → **远程机器…** (*Remote Machines*), enter your SSH alias or `user@host`, and click **连接** (*Connect*). Peek installs `~/.local/bin/peek` on the remote host over your existing `/usr/bin/ssh` setup (`~/.ssh/config`, keys, SSH agent, JumpHosts) with no cloud relay or inbound ports—remote agents can then push cards straight to your Mac.
 
-Preview local files directly without any SSH setup:
+## 2. Add Rule to `CLAUDE.md` / `AGENTS.md`
 
-```sh
-peek screenshot.png
-peek report.md
-peek -t "Design diff" before.png after.png    # multiple files become one card
-peek -c "CI" -t "Build Report" report.html    # custom source label and card title
-peek --list                                   # list cards from the last 24h
-peek --clear                                  # remove all cards and cached snapshots
+Paste this rule into `~/.claude/CLAUDE.md`, `AGENTS.md`, or your editor's global instructions (works on both your Mac and connected SSH servers):
+
+```markdown
+## Visual Delivery (`peek`)
+
+Whenever you generate screenshots, UI comparisons, charts, PDFs, or Markdown/HTML reports for me to inspect, push them to a floating card with `peek`:
+
+- Run `peek -t "Short Title" <file…>` (on remote SSH hosts where `~/.local/bin` is not in `PATH`, run `~/.local/bin/peek -t "Short Title" <file…>`).
+- Pass related images (such as before/after UI diffs or variants) in a single `peek` command so they open side-by-side in one card.
+- Keep CSS, JS, and images referenced by Markdown or HTML as relative paths inside the same folder—`peek` snapshots them with the card automatically, so overwriting files later will not affect earlier cards.
+- Never run `open` or `qlmanage -p` on preview files (it steals window focus), and never leave bare file paths without pushing them via `peek`.
 ```
 
-When `-t` is omitted, single-file cards automatically use `<title>` for HTML, the first `# ` heading for Markdown, or the filename. Full details: [docs/local-usage.md](docs/local-usage.md).
+## 3. Agent Command Reference
+
+```sh
+# Push a Markdown or HTML report (relative images, CSS, and JS are bundled automatically)
+peek -t "Auth Latency Audit" report.md
+
+# Push before/after screenshots in ONE call so they open together for side-by-side comparison
+peek -t "Checkout Header Diff" before.png after.png
+
+# Explicitly label a subagent or background task in the card header
+peek -c "UI Subagent" -t "Dark Mode Check" settings-dark.png
+
+# Remote SSH agent when multiple Macs are connected to the same host (omit --to when only one Mac is connected)
+~/.local/bin/peek -t "Eval Report" --to "<target-uuid>" report.html
+```
+
+- **Supported formats** — Images (`png`, `jpg`, `webp`, `gif`, `svg`, `heic`, `avif`, `tiff`, `bmp`), `pdf`, `md` (GitHub Flavored Markdown), and `html` (sandboxed `WKWebView`; external web links open in the default browser).
+- **Flags before file paths** — Always place `-t "<title>"` and `-c "<source>"` before `<file…>` so commands work identically on macOS `peek` and remote SSH `peek`. When `-t` is omitted, single-file cards use HTML `<title>`, the first Markdown `# ` heading, or the filename.
+- **Safe to overwrite output paths** — Local files are cloned instantly on APFS with zero extra disk space; remote pushes bundle up to 300 referenced assets (64 MiB max) and save originals to `~/Downloads/Peek/<host>/`. Agents can reuse fixed paths like `/tmp/check.png` or `build/report.md` across iterations without mutating earlier cards.
+- **Multi-agent session attribution & jump-back (`↩`)** — When multiple local agents run in parallel, Peek automatically tags each card with its originating Claude Code session (`/rename` name or first prompt), Rex pane, or terminal app. Pressing `↩` (or clicking **回到对话**) jumps straight back to the window or pane that sent that card.
 
 <p align="center">
-  <img src="docs/screenshots/markdown-viewer.png" alt="Peek built-in Markdown viewer rendering bundled local chart assets" width="840">
+  <img src="docs/screenshots/markdown-viewer.png" alt="Agent-pushed Markdown report rendered with bundled local chart assets" width="840">
 </p>
-
-### Remote over SSH
-
-Push files generated on remote servers straight to your Mac:
-
-1. Click the Peek menu bar icon → **远程机器…** (*Remote Machines*), or run `peek --remote-settings`.
-2. Enter an SSH alias or `user@host` and click **连接** (*Connect*). Unknown host fingerprints and passwords use native macOS verification dialogs; passwords are never stored.
-3. Click **拷贝命令** (*Copy Command*), paste it on the remote machine, and append file paths:
-
-```sh
-'/home/me/.local/bin/peek' --to '<target-uuid>' report.html chart.png
-```
-
-When only one Mac is connected to that remote host, `peek report.html` works without `--to`. Local assets referenced by HTML and Markdown are transferred together (up to 300 files / 64 MiB per push), and received originals are saved to `~/Downloads/Peek/<host>/`. Full details and protocol limits: [docs/remote-forwarding.md](docs/remote-forwarding.md).
-
-### AI Agents & Claude Code
-
-- **Any agent or script**: Call `peek <files…>` instead of `open` so generated charts, diffs, PDFs, and reports appear as cards without hijacking focus.
-- **Claude Code hook** *(optional)*: Configure [`Resources/hooks/session-start.sh`](Resources/hooks/session-start.sh) as a `SessionStart` hook (expects `~/Applications/Peek.app`, as installed by `./Scripts/install.sh`). Inside Claude Code Bash sessions, `open *.png/*.pdf/*.md/*.html`, `open -a Preview …`, and `qlmanage -p …` are transparently routed to Peek cards, while URLs, folders, `open -R`, and other apps pass straight to `/usr/bin/open`. Set `PEEK_OFF=1` to bypass.
-
-## Cards & Viewer
 
 <p align="center">
-  <img src="docs/screenshots/image-compare.png" alt="Peek side-by-side image comparison viewer" width="840">
+  <img src="docs/screenshots/image-compare.png" alt="Multi-image card pushed in a single peek command opened in side-by-side comparison mode" width="840">
 </p>
 
-- **Card interactions** — Click to open · `⌥`-Click to reveal in Finder · Drag files directly off a card into other apps · Two-finger swipe right to dismiss · Right-click for context actions.
-- **Styles & layout** — Switch between *Rich*, *Compact*, and *Photo* card styles, stacked deck or vertical list, and edge tucking from the menu bar.
-- **Lifecycle** — Unread cards stay until opened; viewed cards auto-dismiss after 5 minutes of inactivity (up to 3 visible at once, extras queued). Cached snapshots in `~/Library/Caches/Peek/` expire after 24 hours.
-- **Built-in viewer** — Side-by-side image comparison (`⌘D`, enabled by default when opening multiple images on an external display), 1:1 pixel / fit zoom, continuous `PDFKit` view, GFM Markdown via `marked`, and sandboxed `WKWebView` for HTML (external links open in your default browser).
+## 4. Optional: Auto-Intercept `open` in Claude Code
 
-## Shortcuts
+If an agent or subagent still runs `open screenshot.png`, `open -a Preview …`, or `qlmanage -p …` out of habit, add Peek's [`session-start.sh`](Resources/hooks/session-start.sh) hook to `~/.claude/settings.json`. Supported preview files inside Claude Code Bash sessions are converted into Peek cards automatically, while URLs, folders, `open -R`, and other apps pass straight through to `/usr/bin/open` (set `PEEK_OFF=1` to bypass):
 
-Global shortcuts use Carbon hotkeys and require no Accessibility permission. Customize or disable (`""`) via `defaults write com.terryops.peek <key> "<combo>"` (`hotkeyOpen`, `hotkeyTuck`, `hotkeyCloseAll`).
-
-| Shortcut | Scope | Action |
-| --- | --- | --- |
-| `⌃⌥P` | Global | Open or close newest card |
-| `⌃⌥H` | Global | Tuck or restore card stack |
-| `⌃⌥X` | Global | Dismiss all cards |
-| `⎋` / `Space` | Viewer | Close viewer (keep card) |
-| `⌘W` / `⌘⌫` | Viewer | Close viewer and dismiss card |
-| `←` `→` / Swipe | Viewer | Previous / next file in card |
-| `↑` `↓` | Viewer | Previous / next card |
-| `⌘D` | Viewer | Toggle side-by-side comparison |
-| `⌘0` / `⌘1` / `⌘±` | Viewer | Fit to window / 1:1 pixels / zoom |
-| `⌘C` / `⌘R` / `↩` | Viewer | Copy / reveal in Finder / back to conversation |
-| `?` | Viewer | Toggle shortcut cheat sheet |
-
-## Build from Source
-
-Requires macOS 26+, Swift 6.2+ (Xcode), and Go 1.24+ (builds the dependency-free `peek-remote` helper for `darwin` & `linux` on `amd64` & `arm64`).
-
-```sh
-./Scripts/install.sh          # build, self-test, install ~/Applications/Peek.app + LaunchAgent + ~/bin/peek
-./Scripts/build.sh            # build build/Peek.app only (set PEEK_UNIVERSAL=1 for arm64 + x86_64)
-swift test
-(cd Remote && go test -race ./...)
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh -c 'for app in /Applications/Peek.app \"$HOME/Applications/Peek.app\"; do [ -x \"$app/Contents/Resources/hooks/session-start.sh\" ] && exec \"$app/Contents/Resources/hooks/session-start.sh\"; done; exit 0'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
+
+## Manual Usage, Shortcuts & Build Guide
+
+For standalone terminal usage (`--list`, `--clear`, `--quit`), manual SSH commands, card gestures & layout styles, keyboard shortcuts, `defaults` preferences, and building from source, see **[Manual Usage, Shortcuts & Build Guide](docs/manual-usage.md)**.
 
 ## License
 

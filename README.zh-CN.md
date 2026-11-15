@@ -1,26 +1,21 @@
 # Peek
 
-[English](README.md) · 简体中文
+[English](README.md) · 简体中文 · [手动使用与快捷键](docs/manual-usage.zh-CN.md)
 
-面向终端、SSH 与 AI Agent 工作流的原生 macOS 文件预览工具。发来的**图片、PDF、Markdown 和 HTML** 先落在屏幕右上角的不抢焦点浮动卡片；想看时点击卡片在自带查看器中打开，按 `Esc` 立即回到原本正在输入的窗口。
+专为 AI Agent（Claude Code、Codex、Cursor、Windsurf、OpenClaw 等）设计的原生 macOS 浮动预览卡片。Agent 生成的**图片、PDF、Markdown 和 HTML** 不再弹起 Preview 或浏览器抢走你的键盘焦点，也不用去聊天记录里翻裸路径，而是安静推到屏幕右上角的不抢焦点卡片——想看时点击卡片在内置查看器中打开，按 `Esc` 立即回到原窗口继续输入，按 `↩` 直接切回发出这张卡片的对话。
 
 [**下载 Mac 通用版**](https://github.com/terryops/peek/releases/latest) · macOS 26+（Apple Silicon / Intel）· 已签名与公证 · [MIT License](LICENSE)
 
 <p align="center">
-  <img src="docs/screenshots/demo.gif" alt="Peek 演示：终端不失焦推送右上角浮动卡片，点击打开并排对比，按 Esc 直接继续输入" width="840">
+  <img src="docs/screenshots/demo.gif" alt="Peek 演示：AI Agent 不抢终端焦点推送右上角浮动卡片，点击并排对比，按 Esc 直接继续输入" width="840">
 </p>
 
-## 为什么用 Peek
+## 1. 一次性准备
 
-- **不打断当前焦点** — 浮动卡片悬停在所有桌面空间与全屏应用之上，不抢键盘焦点。Peek 常驻菜单栏、无 Dock 图标，关闭查看器后焦点直接回到原来的应用。
-- **独立快照不串改** — 本地文件通过 APFS 克隆瞬间生成快照，不占额外磁盘空间；Markdown 与 HTML 引用的本地 CSS、JS、图片随卡片一并打包，后续覆盖同名截图或报告不会影响旧卡片。
-- **SSH 零中继回传** — 直接复用系统 `/usr/bin/ssh`（沿用 `~/.ssh/config`、密钥、SSH agent 与跳板机），将远程 Linux / macOS（`amd64` / `arm64`）上的文件推回本机。无需注册账号、中继服务或开放 Mac 入站端口。
-- **独立可用，也适配 Agent** — 本地 CLI 与 SSH 远程回传是两个独立入口，可直接在终端或脚本中使用，也可无缝接入 Claude Code 等 AI 编程工具。
-
-## 安装
+### 在本机 Mac 上
 
 1. 从 [GitHub Releases](https://github.com/terryops/peek/releases/latest) 下载 `Peek-universal.zip`，解压后将 `Peek.app` 拖入「应用程序」并打开。
-2. *（可选，配置本地命令行）* 将 `peek` 链接到 `PATH`：
+2. 将 `peek` 链接到 `PATH`，方便本机 Agent 直接调用：
 
 ```sh
 mkdir -p "$HOME/bin"
@@ -29,85 +24,79 @@ ln -sfn "/Applications/Peek.app/Contents/MacOS/Peek" "$HOME/bin/peek"
 
 请确保 `$HOME/bin` 已加入 `PATH`（例如在 `~/.zprofile` 中添加 `export PATH="$HOME/bin:$PATH"`）。
 
-## 快速开始
+### 在远程 SSH 服务器上 *（可选）*
 
-### 本地命令行
+如果 Agent 跑在远程 Linux 或 macOS 服务器（`amd64` / `arm64`）上，点击菜单栏 Peek 图标 →「远程机器…」，输入 SSH 别名或 `user@host` 并点击「连接」。Peek 会直接复用系统 `/usr/bin/ssh`（沿用 `~/.ssh/config`、密钥、SSH agent 与跳板机）在远端安装 `~/.local/bin/peek`，无需任何云端中继或开放入站端口，远端 Agent 即可把文件直接推回当前 Mac。
 
-无需任何远程或 SSH 配置，直接预览本机文件：
+## 2. 写入全局规则（`CLAUDE.md` / `AGENTS.md`）
 
-```sh
-peek screenshot.png
-peek report.md
-peek -t "设计对比" before.png after.png    # 多个文件合并为同一张卡片
-peek -c "CI" -t "构建报告" report.html     # 自定义来源名与卡片标题
-peek --list                                # 列出 24 小时内的卡片
-peek --clear                               # 清空全部卡片与缓存快照
+将以下规则贴入 `~/.claude/CLAUDE.md`、`AGENTS.md` 或编辑器的全局规则（本机与已连接的远程 SSH 服务器通用）：
+
+```markdown
+## 预览交付（`peek`）
+
+凡是需要我查看的截图、UI 前后对比图、图表、PDF 或 Markdown / HTML 报告，统一用 `peek` 推到屏幕右上角浮动卡片：
+
+- 执行 `peek -t "简短标题" <文件…>`（远程 SSH 主机若未将 `~/.local/bin` 加入 `PATH`，执行 `~/.local/bin/peek -t "简短标题" <文件…>`）。
+- 相关的多张图片（如修改前后对比、多方案效果图）放在同一条 `peek` 命令里合推成一张卡，方便并排对比。
+- Markdown / HTML 引用的本地图片、CSS、JS 使用同目录下的相对路径，`peek` 会随卡片自动快照打包，后续覆盖同名文件不会影响旧卡片。
+- 不要对预览文件直接执行 `open` 或 `qlmanage -p`（会抢走当前焦点），也不要只丢文件路径而不推卡片。
 ```
 
-未指定 `-t` 时，单文件卡片会自动提取 HTML 的 `<title>`、Markdown 的首个 `# ` 标题或文件名。详见 [本地使用说明](docs/local-usage.md)。
+## 3. Agent 调用速查
+
+```sh
+# 推送 Markdown 或 HTML 报告（同目录下引用的本地图表、CSS、JS 会随卡片自动打包）
+peek -t "鉴权耗时排查报告" report.md
+
+# 将修改前后多张截图放在同一条命令里合推，点开即可并排对比
+peek -t "结账页顶栏对比" before.png after.png
+
+# 多子 Agent 或后台任务并行时，显式指定卡片顶部的来源名称
+peek -c "UI Subagent" -t "深色模式检查" settings-dark.png
+
+# 远程 SSH Agent（仅在多台 Mac 同时连同一台服务器时需加 --to；单台 Mac 可直接省略）
+~/.local/bin/peek -t "评测报告" --to "<接收端UUID>" report.html
+```
+
+- **支持格式** — 图片（`png`、`jpg`、`webp`、`gif`、`svg`、`heic`、`avif`、`tiff`、`bmp`）、`pdf`、`md`（GFM Markdown）与 `html`（沙盒化 `WKWebView`，外部网页链接通过默认浏览器打开）。
+- **参数写在文件前面** — 始终将 `-t "<标题>"` 与 `-c "<来源>"` 放在文件路径之前，同一套写法在本机 `peek` 与远端 SSH `peek` 上完全一致。省略 `-t` 时，单文件卡片自动提取 HTML `<title>`、Markdown 首个 `# ` 标题或文件名。
+- **反复覆盖原路径也不串改** — 本机文件通过 APFS 克隆瞬间生成独立快照，不占额外磁盘空间；远端推送自动附带最多 300 个本地引用资源（上限 64 MiB），并将原文件存至 `~/Downloads/Peek/<主机>/`。Agent 在多轮迭代中直接覆盖 `/tmp/check.png` 或 `build/report.md` 也不会影响之前推过的卡片。
+- **多 Agent 自动标注来源与「回到对话」（`↩`）** — 本机并行跑多个会话时，卡片顶部会自动识别并标注来源会话（优先取 Claude Code `/rename` 名称、Rex 窗格名或首句 Prompt）。查看卡片时按 `↩` 或点击「回到对话」，即可直接切回发出该卡片的终端或窗格。
 
 <p align="center">
-  <img src="docs/screenshots/markdown-viewer.png" alt="Peek 内置 Markdown 查看器渲染附带的本地图表资源" width="840">
+  <img src="docs/screenshots/markdown-viewer.png" alt="Agent 推送的 Markdown 报告与自动打包的本地图表渲染效果" width="840">
 </p>
-
-### SSH 远程发送
-
-把远程服务器生成的文件直接推回当前 Mac：
-
-1. 点击菜单栏 Peek 图标 →「远程机器…」，或执行 `peek --remote-settings`。
-2. 输入 SSH 别名或 `user@host`，点击「连接」。首次遇到未知主机指纹或需要密码时弹出系统原生验证框，密码不会落盘保存。
-3. 点击「拷贝命令」，粘贴到远程终端并在末尾附上文件路径：
-
-```sh
-'/home/me/.local/bin/peek' --to '<接收端UUID>' report.html chart.png
-```
-
-同一台远程主机只连了一台 Mac 时可省略 `--to`，直接执行 `peek report.html`。HTML / Markdown 引用的本地资源会随文档一起传输（单次最多 300 个文件、64 MiB），收到的原始文件保存在 `~/Downloads/Peek/<主机>/`。完整配置与协议限制见 [远程文件说明](docs/remote-forwarding.md)。
-
-### AI Agent 与 Claude Code
-
-- **任意 Agent 或脚本**：用 `peek <文件…>` 代替 `open`，生成的对比图、PDF 或测试报告只会安静推到右上角卡片，不会弹窗打断操作。
-- **Claude Code 无感集成** *（可选）*：将 [`Resources/hooks/session-start.sh`](Resources/hooks/session-start.sh) 配置为 `SessionStart` hook（需通过 `./Scripts/install.sh` 安装至 `~/Applications/Peek.app`）。配置后，会话内的 `open *.png/*.pdf/*.md/*.html`、`open -a Preview …` 与 `qlmanage -p …` 会自动转为 Peek 卡片；网址、文件夹、`open -R` 及其他应用原样交给 `/usr/bin/open`。设置 `PEEK_OFF=1` 可临时绕过。
-
-## 卡片与查看器
 
 <p align="center">
-  <img src="docs/screenshots/image-compare.png" alt="Peek 内置多图并排对比查看器" width="840">
+  <img src="docs/screenshots/image-compare.png" alt="单条 peek 命令合推多张图片时的并排对比视图" width="840">
 </p>
 
-- **卡片交互** — 点击打开 · `⌥`+点击在访达中显示 · 直接从卡片拖拽文件到其他 App · 双指右滑关闭 · 右键打开快捷菜单。
-- **样式与布局** — 菜单栏可切换「大图 / 简洁 / 照片」三种卡片样式、叠放或竖排列表，以及缩进屏幕右边缘暂存。
-- **自动生命周期** — 未读卡片常驻保留；已查看卡片静置 5 分钟后自动收起（同屏最多显示 3 张，超出自动排队）。`~/Library/Caches/Peek/` 下的快照满 24 小时自动清理。
-- **内置查看器** — 支持多图并排对比（`⌘D`，外接显示器打开多张图片时默认开启）、1:1 像素与适应窗口缩放、PDF 连续滚动、基于 `marked` 的 GFM Markdown 渲染，以及沙盒化的 HTML `WKWebView`（外部链接调用默认浏览器打开）。
+## 4. 可选：Claude Code 自动拦截 `open`
 
-## 快捷键
+如果某个 Agent 或子 Agent 仍习惯性执行 `open screenshot.png`、`open -a Preview …` 或 `qlmanage -p …`，可将 [`session-start.sh`](Resources/hooks/session-start.sh) 加入 `~/.claude/settings.json` 的 `SessionStart` hook。Claude Code Bash 会话中针对可预览文件的打开命令会自动转为 Peek 卡片，而网址、文件夹、`open -R` 及其他指定应用仍原样交给系统 `/usr/bin/open`（设 `PEEK_OFF=1` 可临时绕过）：
 
-全局快捷键基于 Carbon 注册，无需授予辅助功能权限；可通过 `defaults write com.terryops.peek <键名> "<组合键>"`（`hotkeyOpen`、`hotkeyTuck`、`hotkeyCloseAll`）修改，设为空字符串 `""` 可停用。
-
-| 快捷键 | 范围 | 操作 |
-| --- | --- | --- |
-| `⌃⌥P` | 全局 | 打开或关闭最新一张卡片 |
-| `⌃⌥H` | 全局 | 暂时收起或恢复卡片堆叠 |
-| `⌃⌥X` | 全局 | 关闭全部卡片 |
-| `⎋` / `Space` | 查看器 | 关闭查看器（保留卡片） |
-| `⌘W` / `⌘⌫` | 查看器 | 关闭查看器并收走卡片 |
-| `←` `→` / 左右滑 | 查看器 | 切换当前卡片内的文件 |
-| `↑` `↓` | 查看器 | 切换上一张 / 下一张卡片 |
-| `⌘D` | 查看器 | 切换多图并排对比 |
-| `⌘0` / `⌘1` / `⌘±` | 查看器 | 适应窗口 / 原始像素 / 缩放 |
-| `⌘C` / `⌘R` / `↩` | 查看器 | 拷贝 / 在访达中显示 / 回到对话 |
-| `?` | 查看器 | 显示或隐藏快捷键速查表 |
-
-## 源码构建与测试
-
-构建需要 macOS 26+、Swift 6.2+（Xcode）与 Go 1.24+（用于交叉编译无第三方依赖的 `darwin` / `linux` × `amd64` / `arm64` 远程 helper）。
-
-```sh
-./Scripts/install.sh          # 编译、自检并安装 ~/Applications/Peek.app + LaunchAgent + ~/bin/peek
-./Scripts/build.sh            # 仅构建 build/Peek.app（设 PEEK_UNIVERSAL=1 构建通用二进制）
-swift test
-(cd Remote && go test -race ./...)
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh -c 'for app in /Applications/Peek.app \"$HOME/Applications/Peek.app\"; do [ -x \"$app/Contents/Resources/hooks/session-start.sh\" ] && exec \"$app/Contents/Resources/hooks/session-start.sh\"; done; exit 0'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
+
+## 手动使用、快捷键与构建指南
+
+如需在终端手动管理卡片（`--list`、`--clear`、`--quit`）、手动配置与发送 SSH 远程文件、了解卡片手势与样式切换、全局及查看器快捷键、`defaults` 参数调整或从源码编译，请参阅 **[手动使用、快捷键与构建指南](docs/manual-usage.zh-CN.md)**。
 
 ## 许可
 
