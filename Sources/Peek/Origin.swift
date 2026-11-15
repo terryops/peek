@@ -73,20 +73,25 @@ enum Origin {
                   let text = (obj["display"] as? String)?.nonEmpty, !text.hasPrefix("/") else { return nil }
             return text
         }
-        // Latest: scan back from the end, skipping slash commands.
+        // Bound scanning to recent history so multi-hundred-MB history files never page from byte 0.
+        let tailFloor = max(data.startIndex, data.endIndex - 16 * 1024 * 1024)
         var last: String?
+        var lastMatchStart = data.endIndex
         var upper = data.endIndex
-        while last == nil, let r = data.range(of: needle, options: .backwards, in: data.startIndex..<upper) {
+        while last == nil, tailFloor < upper, let r = data.range(of: needle, options: .backwards, in: tailFloor..<upper) {
             last = prompt(at: r)
+            lastMatchStart = r.lowerBound
             upper = r.lowerBound
         }
+        guard last != nil else { return (nil, nil) }
         var first: String?
-        var lower = data.startIndex
-        while first == nil, let r = data.range(of: needle, in: lower..<data.endIndex) {
+        var lower = max(data.startIndex, lastMatchStart - 8 * 1024 * 1024)
+        if lower > data.startIndex, let nl = data[lower...].firstIndex(of: 0x0A) { lower = nl + 1 }
+        while first == nil, lower < data.endIndex, let r = data.range(of: needle, in: lower..<data.endIndex) {
             first = prompt(at: r)
             lower = r.upperBound
         }
-        return (first, last)
+        return (first ?? last, last)
     }
 
     /// Walks up the process tree to the GUI app we're running inside (Ghostty, Terminal, VS Code…).
@@ -132,10 +137,28 @@ enum Origin {
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice
-        guard (try? p.run()) != nil else { return nil }
-        let deadline = Date().addingTimeInterval(timeout)
-        while p.isRunning && Date() < deadline { usleep(5_000) }
-        if p.isRunning { p.terminate(); return nil }
-        return pipe.fileHandleForReading.readDataToEndOfFile()
+        let exited = DispatchSemaphore(value: 0)
+        p.terminationHandler = { _ in exited.signal() }
+        guard (try? p.run()) != nil else {
+            p.terminationHandler = nil
+            return nil
+        }
+        let readBox = PipeBox()
+        let readDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            readBox.data = (try? pipe.fileHandleForReading.readToEnd()) ?? Data()
+            readDone.signal()
+        }
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            p.terminate()
+            try? pipe.fileHandleForReading.close()
+            return nil
+        }
+        _ = readDone.wait(timeout: .now() + 0.25)
+        return p.terminationStatus == 0 ? readBox.data : nil
     }
+}
+
+private final class PipeBox: @unchecked Sendable {
+    var data = Data()
 }

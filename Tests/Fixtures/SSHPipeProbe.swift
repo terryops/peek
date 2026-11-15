@@ -29,7 +29,9 @@ import AppKit
                     fm.createFile(atPath: cancel, contents: Data())
                 } else if mode == "askpass-auto-cancel" {
                     func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
-                    let button = window.contentView.flatMap { descendants($0).compactMap { $0 as? NSButton }.first { $0.title == "取消" } }
+                    let button = window.contentView.flatMap {
+                        descendants($0).compactMap { $0 as? NSButton }.first { $0.title == "取消" || $0.title == "Cancel" }
+                    }
                     guard let button else { exit(8) }
                     button.performClick(nil)
                 }

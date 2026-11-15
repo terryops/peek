@@ -5,9 +5,9 @@ enum CardStyle: String, CaseIterable {
     case compact, rich, photo
     var label: String {
         switch self {
-        case .compact: "简洁"
-        case .rich: "大图"
-        case .photo: "照片"
+        case .compact: L10n.tr("简洁", "Compact")
+        case .rich: L10n.tr("大图", "Rich")
+        case .photo: L10n.tr("照片", "Photo")
         }
     }
 }
@@ -81,6 +81,7 @@ final class CardModel: ObservableObject {
     @Published var pulse = false
     /// Tucked behind the front card in the deck: just the plate, no content.
     @Published var shell = false
+    @Published var shown = false
     @Published var depth = 0
 
     init(item: PeekItem, thumbs: [NSImage], style: CardStyle) {
@@ -93,7 +94,9 @@ final class CardModel: ObservableObject {
     var countText: String? {
         let n = item.files.count
         guard n > 1 else { return nil }
-        return item.allImages ? "\(n) 张" : "\(n) 个文件"
+        return item.allImages
+            ? L10n.tr("\(n) 张", "\(n) images")
+            : L10n.tr("\(n) 个文件", "\(n) files")
     }
 }
 
@@ -109,7 +112,7 @@ struct CardView: View {
             .background {
                 if m.style != .photo || m.shell {
                     Color.clear
-                        .glassEffect(.regular, in: shape)
+                        .peekGlass(in: shape)
                         .overlay(shape.fill(Color.primary.opacity(m.hovered && !m.shell ? 0.05 : 0)))
                         .overlay(shape.fill(Color.black.opacity(m.shell ? 0.05 * Double(m.depth) : 0)))
                 }
@@ -229,7 +232,7 @@ struct PhotoCard: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .foregroundStyle(.white)
-                TimelineView(.periodic(from: .now, by: 20)) { ctx in
+                TimelineView(RelativeTimeSchedule(created: m.item.created, paused: m.shell || !m.shown)) { ctx in
                     HStack(spacing: 4) {
                         Image(systemName: "bubble.left.fill").font(.system(size: 8.5, weight: .semibold))
                         Text(m.item.conversationTitle).lineLimit(1).truncationMode(.tail)
@@ -299,7 +302,7 @@ struct TimeOrClose: View {
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            TimelineView(.periodic(from: .now, by: 20)) { ctx in
+            TimelineView(RelativeTimeSchedule(created: m.item.created, paused: m.shell || !m.shown)) { ctx in
                 Text(RelativeTime.string(m.item.created, now: ctx.date))
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
@@ -424,14 +427,61 @@ struct ThumbStack: View {
     }
 }
 
+struct RelativeTimeSchedule: TimelineSchedule {
+    let created: Date
+    let paused: Bool
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> Entries {
+        Entries(created: created, current: startDate, singleShot: paused)
+    }
+
+    struct Entries: Sequence, IteratorProtocol {
+        let created: Date
+        var current: Date?
+        let singleShot: Bool
+
+        mutating func next() -> Date? {
+            guard let now = current else { return nil }
+            if singleShot {
+                current = nil
+                return now
+            }
+            let age = now.timeIntervalSince(created)
+            if age < 45 {
+                current = Swift.max(now.addingTimeInterval(1), created.addingTimeInterval(45))
+            } else if age < 3600 {
+                let nextOffset = Swift.min(3600, (floor((age - 30) / 60) + 1) * 60 + 30)
+                current = Swift.max(now.addingTimeInterval(1), created.addingTimeInterval(nextOffset))
+            } else {
+                let cal = Calendar.current
+                let nextDay = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now))
+                current = nextDay.map { Swift.max(now.addingTimeInterval(60), $0) }
+            }
+            return now
+        }
+    }
+}
+
 enum RelativeTime {
+    private static let lock = NSLock()
+    private static let hmFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
     static func string(_ date: Date, now: Date) -> String {
         let s = now.timeIntervalSince(date)
-        if s < 45 { return "刚刚" }
-        if s < 3600 { return "\(max(1, Int((s / 60).rounded()))) 分钟前" }
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = Calendar.current.isDate(date, inSameDayAs: now) ? "HH:mm" : "'昨天' HH:mm"
-        return f.string(from: date)
+        if s < 45 { return L10n.tr("刚刚", "Just now") }
+        if s < 3600 {
+            let mins = max(1, Int((s / 60).rounded()))
+            return L10n.tr("\(mins) 分钟前", "\(mins)m ago")
+        }
+        lock.lock()
+        let hm = hmFormatter.string(from: date)
+        lock.unlock()
+        if Calendar.current.isDate(date, inSameDayAs: now) { return hm }
+        return L10n.tr("昨天 \(hm)", "Yesterday \(hm)")
     }
 }

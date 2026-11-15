@@ -4,7 +4,7 @@
 
 专为 AI Agent（Claude Code、Codex、Cursor、Windsurf、OpenClaw 等）设计的原生 macOS 浮动预览卡片。Agent 生成的**图片、PDF、Markdown 和 HTML** 不再弹起 Preview 或浏览器抢走你的键盘焦点，也不用去聊天记录里翻裸路径，而是安静推到屏幕右上角的不抢焦点卡片——想看时点击卡片在内置查看器中打开，按 `Esc` 立即回到原窗口继续输入，按 `↩` 直接切回发出这张卡片的对话。
 
-[**下载 Mac 通用版**](https://github.com/terryops/peek/releases/latest) · macOS 26+（Apple Silicon / Intel）· 已签名与公证 · [MIT License](LICENSE)
+[**下载 Mac 通用版**](https://github.com/terryops/peek/releases/latest) · macOS 14+（Apple Silicon / Intel）· 已签名与公证 · [MIT License](LICENSE)
 
 <p align="center">
   <img src="docs/screenshots/demo.gif" alt="Peek 演示：AI Agent 不抢对话焦点推送右上角浮动卡片，点击并排对比，按 Esc 直接回到聊天框继续输入" width="840">
@@ -15,7 +15,7 @@
 ### 在本机 Mac 上
 
 1. 从 [GitHub Releases](https://github.com/terryops/peek/releases/latest) 下载 `Peek-universal.zip`，解压后将 `Peek.app` 拖入「应用程序」并打开。
-2. 将 `peek` 链接到 `PATH`，方便本机 Agent 直接调用：
+2. 点击菜单栏 Peek 图标 →「安装 peek 命令」（并可勾选「登录时打开」），或在终端手动创建软链接：
 
 ```sh
 mkdir -p "$HOME/bin"
@@ -26,7 +26,7 @@ ln -sfn "/Applications/Peek.app/Contents/MacOS/Peek" "$HOME/bin/peek"
 
 ### 在远程 SSH 服务器上 *（可选）*
 
-如果 Agent 跑在远程 Linux 或 macOS 服务器（`amd64` / `arm64`）上，点击菜单栏 Peek 图标 →「远程机器…」，输入 SSH 别名或 `user@host` 并点击「连接」。Peek 会直接复用系统 `/usr/bin/ssh`（沿用 `~/.ssh/config`、密钥、SSH agent 与跳板机）在远端安装 `~/.local/bin/peek`，无需任何云端中继或开放入站端口，远端 Agent 即可把文件直接推回当前 Mac。
+如果 Agent 跑在远程 Linux 或 macOS 服务器（`amd64` / `arm64`）上，点击菜单栏 Peek 图标 →「远程机器…」，输入 SSH 别名、`user@host` 或 `user@host:port` 并点击「连接」。Peek 会直接复用系统 `/usr/bin/ssh`（沿用 `~/.ssh/config`、密钥、SSH agent 与跳板机）在远端安装 `~/.local/bin/peek`，无需任何云端中继或开放入站端口，远端 Agent 即可把文件直接推回当前 Mac。
 
 ## 2. 写入全局规则（`CLAUDE.md` / `AGENTS.md`）
 
@@ -60,8 +60,8 @@ peek -c "UI Subagent" -t "深色模式检查" settings-dark.png
 ```
 
 - **支持格式** — 图片（`png`、`jpg`、`webp`、`gif`、`svg`、`heic`、`avif`、`tiff`、`bmp`）、`pdf`、`md`（GFM Markdown）与 `html`（沙盒化 `WKWebView`，外部网页链接通过默认浏览器打开）。
-- **参数写在文件前面** — 始终将 `-t "<标题>"` 与 `-c "<来源>"` 放在文件路径之前，同一套写法在本机 `peek` 与远端 SSH `peek` 上完全一致。省略 `-t` 时，单文件卡片自动提取 HTML `<title>`、Markdown 首个 `# ` 标题或文件名。
-- **反复覆盖原路径也不串改** — 本机文件通过 APFS 克隆瞬间生成独立快照，不占额外磁盘空间；远端推送自动附带最多 300 个本地引用资源（上限 64 MiB），并将原文件存至 `~/Downloads/Peek/<主机>/`。Agent 在多轮迭代中直接覆盖 `/tmp/check.png` 或 `build/report.md` 也不会影响之前推过的卡片。
+- **参数位置自由** — 本机 `peek` 与远端 SSH `peek` 均支持短参数（`-t`、`-c`、`-s`）和长参数（`--title`、`--conversation`、`--source`、`--flag=value`），放在文件路径前后均可（`--` 之后视为纯路径）。省略 `-t` 时，单文件卡片自动提取 HTML `<title>`、Markdown 首个 `# ` 标题或文件名。
+- **反复覆盖原路径也不串改** — 本机文件通过 APFS 克隆瞬间生成独立快照，不占额外磁盘空间；远端推送自动附带最多 300 个本地引用资源（上限 64 MiB），并将原文件存至 `~/Downloads/Peek/<主机>/<时间>_<标题>_<短ID>/`。Agent 在多轮迭代中直接覆盖 `/tmp/check.png` 或 `build/report.md` 也不会影响之前推过的卡片。
 - **多 Agent 自动标注来源与「回到对话」（`↩`）** — 本机并行跑多个会话时，卡片顶部会自动识别并标注来源会话（优先取 Claude Code `/rename` 名称、Rex 窗格名或首句 Prompt）。查看卡片时按 `↩` 或点击「回到对话」，即可直接切回发出该卡片的终端或窗格。
 
 <p align="center">

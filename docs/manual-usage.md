@@ -39,9 +39,9 @@ peek --quit              # quit the background menu bar app
 
 Push files from remote Linux or macOS machines (`amd64` / `arm64`) over your existing `/usr/bin/ssh` configuration (`~/.ssh/config`, keys, SSH agent, JumpHosts) with no relay service or inbound ports on your Mac:
 
-1. Open the Peek menu bar icon → **远程机器…** (*Remote Machines*), or run `peek --remote-settings`.
-2. Enter an SSH alias or `user@host` and click **连接** (*Connect*). Unknown host fingerprints and passwords use native macOS verification dialogs; passwords are never stored.
-3. Click **拷贝命令** (*Copy Command*), paste it on the remote machine, and append file paths:
+1. Open the Peek menu bar icon → **Remote Machines…** (*远程机器…*), or run `peek --remote-settings`.
+2. Enter an SSH alias, `user@host`, or `user@host:port` and click **Connect**. Unknown host fingerprints and passwords use native macOS verification dialogs; passwords are never stored.
+3. Click **Copy Command**, paste it on the remote machine, and append file paths:
 
 ```sh
 '/home/me/.local/bin/peek' --to '<target-uuid>' report.html chart.png
@@ -58,7 +58,7 @@ PEEK_TARGET=<target-uuid> peek report.pdf
 
 - `--to` can be omitted when only one Mac is connected to that remote host; when multiple Macs connect to the same host, select the target UUID or unique name explicitly.
 - Referenced local HTML/Markdown assets transfer automatically (up to 300 files / 64 MiB total per push; symlinks never escape the document root).
-- Received originals are saved to `~/Downloads/Peek/<host>/<request-uuid>/`; card snapshots follow the 24-hour cache lifecycle while Downloads copies are kept.
+- Received originals are saved to `~/Downloads/Peek/<host>/<timestamp>_<title>_<id>/`; card snapshots follow the 24-hour cache lifecycle while Downloads copies are kept.
 - Extended Chinese reference: [local-usage.md](local-usage.md) · [remote-forwarding.md](remote-forwarding.md).
 
 ## Cards & Viewer Interactions
@@ -97,11 +97,12 @@ defaults write com.terryops.peek lingerSeconds -float 300
 defaults write com.terryops.peek maxCards -int 3
 defaults write com.terryops.peek style rich                # rich | compact | photo
 defaults write com.terryops.peek stacking deck             # deck | list
+defaults write com.terryops.peek language en               # zh | en (defaults to macOS language)
 ```
 
 ## Build from Source & Test
 
-Requires macOS 26+, Swift 6.2+ (Xcode), and Go 1.24+ (cross-compiles the dependency-free `peek-remote` helper for `darwin` & `linux` on `amd64` & `arm64`).
+Requires macOS 14+, Swift 6.0+ (Xcode), and Go 1.24+ (cross-compiles the dependency-free `peek-remote` helper for `darwin` & `linux` on `amd64` & `arm64`).
 
 ```sh
 ./Scripts/install.sh                        # build, self-test, install ~/Applications/Peek.app + LaunchAgent + ~/bin/peek

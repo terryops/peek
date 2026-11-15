@@ -40,7 +40,7 @@ peek --quit              # 退出菜单栏后台应用
 直接复用系统 `/usr/bin/ssh`（沿用 `~/.ssh/config`、密钥、SSH agent 与跳板机），从远程 Linux 或 macOS（`amd64` / `arm64`）向本机推文件，无需账号、中继服务或 Mac 入站端口：
 
 1. 点击菜单栏 Peek 图标 →「远程机器…」，或执行 `peek --remote-settings`。
-2. 输入 SSH 别名或 `user@host` 并点击「连接」。首次遇到未知主机指纹或需要密码时使用系统原生验证窗口，密码不会落盘保存。
+2. 输入 SSH 别名、`user@host` 或 `user@host:port` 并点击「连接」。首次遇到未知主机指纹或需要密码时使用系统原生验证窗口，密码不会落盘保存。
 3. 点击「拷贝命令」，粘贴到远程终端并在末尾附上文件路径：
 
 ```sh
@@ -58,7 +58,7 @@ PEEK_TARGET=<接收端UUID> peek report.pdf
 
 - 同一台远程主机只连接了一台 Mac 时可省略 `--to`；多台 Mac 同时连接同一主机时需显式指定 UUID 或唯一名称。
 - HTML / Markdown 引用的本地资源随文档一同传输（单次最多 300 个文件、总计 64 MiB；符号链接不会越过文档根目录）。
-- 收到的原始文件保存在 `~/Downloads/Peek/<主机>/<请求UUID>/`；卡片快照遵循 24 小时缓存清理规则，Downloads 中的原文件保留。
+- 收到的原始文件保存在 `~/Downloads/Peek/<主机>/<时间>_<标题>_<短ID>/`；卡片快照遵循 24 小时缓存清理规则，Downloads 中的原文件保留。
 - 更多细节参考：[local-usage.md](local-usage.md) · [remote-forwarding.md](remote-forwarding.md)。
 
 ## 卡片与查看器操作
@@ -97,11 +97,12 @@ defaults write com.terryops.peek lingerSeconds -float 300
 defaults write com.terryops.peek maxCards -int 3
 defaults write com.terryops.peek style rich                # rich | compact | photo
 defaults write com.terryops.peek stacking deck             # deck | list
+defaults write com.terryops.peek language zh               # zh | en（默认跟随系统语言）
 ```
 
 ## 源码构建与测试
 
-构建需要 macOS 26+、Swift 6.2+（Xcode）与 Go 1.24+（交叉编译无第三方依赖的 `darwin` / `linux` × `amd64` / `arm64` 远程 helper）。
+构建需要 macOS 14+、Swift 6.0+（Xcode）与 Go 1.24+（交叉编译无第三方依赖的 `darwin` / `linux` × `amd64` / `arm64` 远程 helper）。
 
 ```sh
 ./Scripts/install.sh                        # 编译、自检并安装 ~/Applications/Peek.app + LaunchAgent + ~/bin/peek

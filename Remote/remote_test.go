@@ -661,3 +661,69 @@ func TestInstallFallbackSurvivesOptionalLauncherFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestSenderFlagsAllowTrailingOptionsAndLongNames(t *testing.T) {
+	opts, err := parseSenderArgs([]string{"before.png", "after.png", "--title", "Header Diff", "--conversation=UI Agent", "-s", "checkout", "--", "-literal.png"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.title != "Header Diff" || opts.conversation != "UI Agent" || opts.source != "checkout" {
+		t.Fatalf("unexpected options: %+v", opts)
+	}
+	if strings.Join(opts.files, ",") != "before.png,after.png,-literal.png" {
+		t.Fatalf("unexpected files: %+v", opts.files)
+	}
+	t.Setenv("PEEK_SOURCE", "")
+	defaults, err := parseSenderArgs([]string{"report.md"})
+	if err != nil || defaults.source != "" {
+		t.Fatalf("default source must be empty, got %q (%v)", defaults.source, err)
+	}
+}
+
+func TestAutoDetectsGitProjectClaudeNameAndSpacedMarkdownAssets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_PID", "4242")
+	fixture(t, filepath.Join(home, ".claude/sessions/4242.json"), `{"name":"Perf Audit","nameSource":"user"}`)
+	repo := filepath.Join(home, "work/api-gateway")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(repo, "docs")
+	doc := fixture(t, filepath.Join(sub, "report.md"), "![chart](<my chart.png>)\n")
+	fixture(t, filepath.Join(sub, "my chart.png"), "png-bytes")
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(sub); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	m, _, err := collect([]string{doc}, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Source != "" {
+		t.Fatalf("expected empty explicit source, got %q", m.Source)
+	}
+	if m.Conversation != "Perf Audit" {
+		t.Fatalf("expected Claude session name, got %q", m.Conversation)
+	}
+	if m.Origin == nil || m.Origin.Project != "api-gateway" {
+		t.Fatalf("expected detected git repo, got %+v", m.Origin)
+	}
+	if len(m.Files) != 2 || m.Files[1].Path != "0/my chart.png" {
+		t.Fatalf("expected spaced markdown asset, got %+v", m.Files)
+	}
+	fallback := filepath.Join(home, ".local/share/peek/bin/peek-remote")
+	exe := fixture(t, filepath.Join(home, "uploaded"), "helper-bytes")
+	cmd1, err := install(home, exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd2, err := install(home, fallback)
+	if err != nil || cmd1 != cmd2 {
+		t.Fatalf("in-place install mismatch: %q vs %q (%v)", cmd1, cmd2, err)
+	}
+}

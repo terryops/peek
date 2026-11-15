@@ -16,11 +16,11 @@ enum SSHAskpass {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let alert = NSAlert()
-        alert.messageText = "SSH 验证"
+        alert.messageText = L10n.tr("SSH 验证", "SSH Verification")
         alert.informativeText = question
         let confirmation = question.lowercased().contains("yes/no") || question.lowercased().contains("fingerprint")
-        alert.addButton(withTitle: confirmation ? "信任并连接" : "连接")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: confirmation ? L10n.tr("信任并连接", "Trust & Connect") : L10n.tr("连接", "Connect"))
+        alert.addButton(withTitle: L10n.tr("取消", "Cancel"))
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         if !confirmation { alert.accessoryView = field }
         let timer = Timer(timeInterval: 0.1, repeats: true) { _ in

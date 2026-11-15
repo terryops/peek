@@ -6,10 +6,13 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 PEEK=""
 for candidate in \
     "${SELF_DIR:+$SELF_DIR/../../MacOS/Peek}" \
-    "/Applications/Peek.app/Contents/MacOS/Peek" \
-    "$HOME/Applications/Peek.app/Contents/MacOS/Peek"
+    "$HOME/Applications/Peek.app/Contents/MacOS/Peek" \
+    "/Applications/Peek.app/Contents/MacOS/Peek"
 do
-    if [[ -n "$candidate" && -x "$candidate" ]]; then PEEK="$candidate"; break; fi
+    if [[ -n "$candidate" && -x "$candidate" && -x "${candidate%/MacOS/Peek}/Resources/ssh-askpass" ]]; then
+        PEEK="$candidate"
+        break
+    fi
 done
 [[ -n "$PEEK" && -z "${PEEK_OFF:-}" ]] || exec "$REAL" "$@"
 
@@ -42,7 +45,7 @@ done
 for f in "${files[@]}"; do
     [[ -f "$f" ]] || exec "$REAL" "$@"
     case "${f##*.}" in
-        png|jpg|jpeg|gif|webp|heic|heif|tif|tiff|bmp|avif|svg|pdf|md|markdown|html|htm) ;;
+        png|jpg|jpeg|gif|webp|heic|heif|tif|tiff|bmp|avif|svg|pdf|md|markdown|mdown|mkd|html|htm|xhtml) ;;
         *) exec "$REAL" "$@" ;;
     esac
 done

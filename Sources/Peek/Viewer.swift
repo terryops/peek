@@ -18,6 +18,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var stripHost: NSHostingView<FilmstripView>?
     private let help = HelpModel()
     private var helpHost: NSView?
+    private let compareZoom = CompareZoomModel()
     private var swipeOffset: CGFloat = 0
     private var swipeOutgoing: NSView?
     private var swipeAnimationGeneration = 0
@@ -44,7 +45,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             "content": main.map { String(describing: type(of: $0)) } ?? "-",
             "magnification": (main as? ZoomImageView)?.magnification ?? 0,
             "swipeOffset": swipeOffset,
-            "toolbar": win.toolbar?.items.filter { !$0.isHidden }.map(\.label) ?? [],
+            "toolbar": win.toolbar?.items.filter { isToolbarItemVisible($0) }.map(\.label) ?? [],
         ]
     }
 
@@ -67,7 +68,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
         // A non-activating panel: it takes the keyboard (esc, arrows, ⌘C) while the app
         // you were in stays active, so closing it drops you right back where you were.
-        defer { win.toolbar?.items.forEach(refresh) }
+        defer { syncToolbar(win.toolbar) }
         if win.isVisible {
             if !reopenSame { Anim.run(0.32, Anim.outQuint) { win.animator().setFrame(target, display: true) } }
             win.orderFrontRegardless()
@@ -222,8 +223,9 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
         let view: NSView
         if compare {
+            compareZoom.reset()
             let images = item.urls.map { NSImage(contentsOf: $0) ?? NSWorkspace.shared.icon(forFile: $0.path) }
-            let host = NSHostingView(rootView: CompareView(images: images))
+            let host = NSHostingView(rootView: CompareView(images: images, names: item.files.map(\.name), zoom: compareZoom))
             host.sizingOptions = []
             view = host
         } else {
@@ -248,10 +250,18 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
         main = view
 
-        strip.thumbs = Thumbs.cached(item) ?? []
+        let cachedThumbs = Thumbs.cached(item) ?? []
+        strip.thumbs = cachedThumbs
         strip.names = item.files.map(\.name)
         strip.selected = index
         strip.visible = showStrip
+        if showStrip, cachedThumbs.count < item.urls.count {
+            let wantedID = item.id
+            Thumbs.load(item, limit: item.urls.count) { [weak self] imgs in
+                guard let self, self.item?.id == wantedID else { return }
+                self.strip.thumbs = imgs
+            }
+        }
         if let z = view as? ZoomImageView {
             z.topInset = max(28, win.frame.height - win.contentLayoutRect.height)
             z.bottomInset = showStrip ? 84 : 0
@@ -262,7 +272,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         if item.files.count > 1 && !compare { sub += " · \(index + 1)/\(item.files.count)" }
         sub += " · " + RelativeTime.string(item.created, now: Date())
         win.subtitle = sub
-        win.toolbar?.items.forEach(refresh)
+        syncToolbar(win.toolbar)
     }
 
     static func makeViewer(for url: URL) -> NSView {
@@ -281,7 +291,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             v.setImage(img)
             return v
         }
-        let ql = QLPreviewView(frame: .zero, style: .normal)!
+        guard let ql = QLPreviewView(frame: .zero, style: .normal) else { return NSView() }
         ql.previewItem = url as NSURL
         return ql
     }
@@ -404,6 +414,10 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     func zoom(_ action: ZoomImageView.Action) {
         window?.cancelSwipeTracking()
         cancelSwipeAnimation()
+        if compare {
+            compareZoom.perform(action)
+            return
+        }
         (main as? ZoomImageView)?.perform(action)
         (main as? WebDocView)?.zoom(action)
     }
@@ -474,21 +488,25 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         switch id {
         case ID.nav:
-            let group = NSToolbarItemGroup(itemIdentifier: id,
-                                           images: [symbol("chevron.left"), symbol("chevron.right")],
-                                           selectionMode: .momentary, labels: ["上一张 ←", "下一张 →"],
-                                           target: self, action: #selector(navTapped(_:)))
-            group.label = "切换"
+            let group = NSToolbarItemGroup(
+                itemIdentifier: id,
+                images: [symbol("chevron.left"), symbol("chevron.right")],
+                selectionMode: .momentary,
+                labels: [L10n.tr("上一张 ←", "Previous ←"), L10n.tr("下一张 →", "Next →")],
+                target: self, action: #selector(navTapped(_:))
+            )
+            group.label = L10n.tr("切换", "Navigate")
             return group
         case ID.compare:
-            return button(id, "rectangle.split.2x1", "并排对比", #selector(compareTapped))
+            return button(id, "rectangle.split.2x1", L10n.tr("并排对比", "Compare"), #selector(compareTapped))
         case ID.copy:
-            return button(id, "doc.on.doc", "拷贝  ⌘C", #selector(copyTapped))
+            return button(id, "doc.on.doc", L10n.tr("拷贝  ⌘C", "Copy  ⌘C"), #selector(copyTapped))
         case ID.reveal:
-            return button(id, "folder", "在访达中显示  ⌘R", #selector(revealTapped))
+            return button(id, "folder", L10n.tr("在访达中显示  ⌘R", "Reveal in Finder  ⌘R"), #selector(revealTapped))
         case ID.jump:
             let item = NSToolbarItem(itemIdentifier: id)
-            let b = NSButton(title: "回到对话",
+            let label = L10n.tr("回到对话", "Jump to Session")
+            let b = NSButton(title: label,
                              image: NSImage(systemSymbolName: "arrowshape.turn.up.backward.fill", accessibilityDescription: nil) ?? NSImage(),
                              target: self, action: #selector(jumpTapped))
             b.imagePosition = .imageLeading
@@ -496,7 +514,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             b.bezelStyle = .toolbar
             b.font = .systemFont(ofSize: 12.5, weight: .medium)
             item.view = b
-            item.label = "回到对话"
+            item.label = label
             item.isBordered = true
             return item
         default:
@@ -519,18 +537,63 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         return item
     }
 
+    private func isToolbarItemVisible(_ t: NSToolbarItem) -> Bool {
+        if #available(macOS 15.0, *) { return !t.isHidden }
+        return true
+    }
+
+    private func setToolbarItemHidden(_ t: NSToolbarItem, _ hidden: Bool) {
+        if #available(macOS 15.0, *) {
+            t.isHidden = hidden
+        }
+    }
+
+    private func syncToolbar(_ toolbar: NSToolbar?) {
+        guard let toolbar else { return }
+        if #unavailable(macOS 15.0) {
+            let multi = (item?.files.count ?? 0) > 1
+            var wanted: [NSToolbarItem.Identifier] = [.flexibleSpace]
+            if multi && !compare { wanted.append(ID.nav) }
+            if multi { wanted.append(ID.compare) }
+            wanted.append(contentsOf: [ID.copy, ID.reveal])
+            if item?.origin?.canJump ?? false { wanted.append(ID.jump) }
+            if toolbar.items.map(\.itemIdentifier) != wanted {
+                while !toolbar.items.isEmpty { toolbar.removeItem(at: 0) }
+                for (idx, id) in wanted.enumerated() {
+                    toolbar.insertItem(withItemIdentifier: id, at: idx)
+                }
+            }
+        }
+        toolbar.items.forEach(refresh)
+    }
+
     private func refresh(_ t: NSToolbarItem) {
         let multi = (item?.files.count ?? 0) > 1
         switch t.itemIdentifier {
-        case ID.nav: t.isHidden = !multi || compare
+        case ID.nav:
+            setToolbarItemHidden(t, !multi || compare)
+            t.label = L10n.tr("切换", "Navigate")
         case ID.compare:
-            t.isHidden = !multi
+            setToolbarItemHidden(t, !multi)
             t.image = NSImage(systemSymbolName: compare ? "square" : "rectangle.split.2x1", accessibilityDescription: nil)
-            t.label = compare ? "单张查看  ⌘D" : "并排对比  ⌘D"
+            t.label = compare
+                ? L10n.tr("单张查看  ⌘D", "Single View  ⌘D")
+                : L10n.tr("并排对比  ⌘D", "Compare  ⌘D")
+            t.toolTip = t.label
+        case ID.copy:
+            t.label = L10n.tr("拷贝  ⌘C", "Copy  ⌘C")
+            t.toolTip = t.label
+        case ID.reveal:
+            t.label = L10n.tr("在访达中显示  ⌘R", "Reveal in Finder  ⌘R")
             t.toolTip = t.label
         case ID.jump:
-            t.isHidden = !(item?.origin?.canJump ?? false)
-            if let c = item?.origin?.conversation { t.toolTip = "回到对话  ↩\n\(c)" + (item?.origin?.prompt.map { "\n\($0)" } ?? "") }
+            setToolbarItemHidden(t, !(item?.origin?.canJump ?? false))
+            let label = L10n.tr("回到对话", "Jump to Session")
+            t.label = label
+            (t.view as? NSButton)?.title = label
+            if let c = item?.origin?.conversation {
+                t.toolTip = "\(label)  ↩\n\(c)" + (item?.origin?.prompt.map { "\n\($0)" } ?? "")
+            }
         default: break
         }
     }
@@ -806,59 +869,137 @@ final class StripModel: ObservableObject {
 struct FilmstripView: View {
     @ObservedObject var m: StripModel
     var pick: (Int) -> Void
+    private let pillShape = RoundedRectangle(cornerRadius: 17, style: .continuous)
 
     var body: some View {
         if m.visible {
-            HStack(spacing: 8) {
-                ForEach(Array(m.names.enumerated()), id: \.offset) { i, name in
-                    Button { pick(i) } label: {
-                        Group {
-                            if i < m.thumbs.count {
-                                Image(nsImage: m.thumbs[i]).resizable().aspectRatio(contentMode: .fill)
-                            } else {
-                                Color.white.opacity(0.08)
-                            }
-                        }
-                        .frame(width: 46, height: 46)
-                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .strokeBorder(i == m.selected ? Color.white : Color.white.opacity(0.15),
-                                              lineWidth: i == m.selected ? 2 : 0.5)
-                        )
-                        .opacity(i == m.selected ? 1 : 0.6)
-                        .scaleEffect(i == m.selected ? 1 : 0.92)
+            ViewThatFits(in: .horizontal) {
+                row
+                    .padding(8)
+                    .peekGlass(in: pillShape)
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        row.padding(8)
                     }
-                    .buttonStyle(.plain)
-                    .help(name)
-                    .accessibilityLabel(name)
+                    .peekGlass(in: pillShape)
+                    .padding(.horizontal, 16)
+                    .onChange(of: m.selected) { _, idx in
+                        withAnimation(.snappy(duration: 0.22)) {
+                            proxy.scrollTo(idx, anchor: .center)
+                        }
+                    }
                 }
             }
-            .padding(8)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
             .animation(.snappy(duration: 0.22), value: m.selected)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var row: some View {
+        HStack(spacing: 8) {
+            ForEach(Array(m.names.enumerated()), id: \.offset) { i, name in
+                Button { pick(i) } label: {
+                    Group {
+                        if i < m.thumbs.count {
+                            Image(nsImage: m.thumbs[i]).resizable().aspectRatio(contentMode: .fill)
+                        } else {
+                            Color.white.opacity(0.08)
+                        }
+                    }
+                    .frame(width: 46, height: 46)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .strokeBorder(i == m.selected ? Color.white : Color.white.opacity(0.15),
+                                          lineWidth: i == m.selected ? 2 : 0.5)
+                    )
+                    .opacity(i == m.selected ? 1 : 0.6)
+                    .scaleEffect(i == m.selected ? 1 : 0.92)
+                }
+                .buttonStyle(.plain)
+                .help(name)
+                .accessibilityLabel(name)
+                .id(i)
+            }
+        }
+    }
+}
+
+final class CompareZoomModel: ObservableObject {
+    @Published var scale: CGFloat = 1
+    @Published var liveMagnification: CGFloat = 1
+
+    var effectiveScale: CGFloat {
+        min(8, max(0.5, scale * liveMagnification))
+    }
+
+    func reset() {
+        scale = 1
+        liveMagnification = 1
+    }
+
+    func perform(_ action: ZoomImageView.Action) {
+        withAnimation(.easeOut(duration: 0.18)) {
+            switch action {
+            case .fit, .actual:
+                scale = 1
+                liveMagnification = 1
+            case .zoomIn:
+                scale = min(8, scale * 1.4)
+            case .zoomOut:
+                scale = max(0.5, scale / 1.4)
+            }
         }
     }
 }
 
 struct CompareView: View {
     let images: [NSImage]
+    var names: [String] = []
+    @ObservedObject var zoom = CompareZoomModel()
 
     var body: some View {
-        HStack(spacing: 16) {
-            ForEach(Array(images.enumerated()), id: \.offset) { _, img in
-                Image(nsImage: img)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
+        GeometryReader { geo in
+            let baseW = max(1, geo.size.width - 32)
+            let baseH = max(1, geo.size.height - 76)
+            let s = zoom.effectiveScale
+            ScrollView([.horizontal, .vertical], showsIndicators: s > 1.01) {
+                HStack(spacing: 16) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { i, img in
+                        VStack(spacing: 8) {
+                            Image(nsImage: img)
+                                .resizable()
+                                .interpolation(.high)
+                                .aspectRatio(contentMode: .fit)
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
+                            if i < names.count, !names[i].isEmpty {
+                                Text(names[i])
+                                    .font(.system(size: 11.5, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.75))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(.white.opacity(0.08)))
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 60)
+                .padding(.bottom, 16)
+                .frame(width: baseW * s + 32, height: baseH * s + 76)
             }
+            .gesture(
+                MagnificationGesture()
+                    .onChanged { value in zoom.liveMagnification = value }
+                    .onEnded { value in
+                        zoom.scale = min(8, max(0.5, zoom.scale * value))
+                        zoom.liveMagnification = 1
+                    }
+            )
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 60)
-        .padding(.bottom, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -872,23 +1013,29 @@ final class HelpModel: ObservableObject {
 struct ShortcutSheet: View {
     @ObservedObject var m: HelpModel
 
-    private let viewer: [(String, String)] = [
-        ("⎋  Space", "关闭"),
-        ("←  →", "切换这张卡里的文件"),
-        ("双指左右滑", "上一张 / 下一张文件"),
-        ("滚轮上下", "上一张 / 下一张图片"),
-        ("↑  ↓", "上一张 / 下一张卡"),
-        ("↩", "回到对话"),
-        ("⌘C", "拷贝"),
-        ("⌘R", "在访达中显示"),
-        ("⌘D", "并排对比"),
-        ("⌘W  ⌘⌫", "关闭并收走这张卡"),
-        ("⌘0  ⌘1", "适应窗口 / 原始像素"),
-        ("⌘=  ⌘-", "放大 / 缩小"),
-    ]
+    private var viewer: [(String, String)] {
+        [
+            ("⎋  Space", L10n.tr("关闭", "Close")),
+            ("←  →", L10n.tr("切换这张卡里的文件", "Previous / next file")),
+            (L10n.tr("双指左右滑", "Swipe ↔"), L10n.tr("上一张 / 下一张文件", "Previous / next file")),
+            (L10n.tr("滚轮上下", "Scroll ↕"), L10n.tr("上一张 / 下一张图片", "Previous / next image")),
+            ("↑  ↓", L10n.tr("上一张 / 下一张卡", "Newer / older card")),
+            ("↩", L10n.tr("回到对话", "Jump to session")),
+            ("⌘C", L10n.tr("拷贝", "Copy")),
+            ("⌘R", L10n.tr("在访达中显示", "Reveal in Finder")),
+            ("⌘D", L10n.tr("并排对比", "Side-by-side compare")),
+            ("⌘W  ⌘⌫", L10n.tr("关闭并收走这张卡", "Close & dismiss card")),
+            ("⌘0  ⌘1", L10n.tr("适应窗口 / 原始像素", "Fit to window / 1:1 pixels")),
+            ("⌘=  ⌘-", L10n.tr("放大 / 缩小", "Zoom in / out")),
+        ]
+    }
 
     private var global: [(String, String)] {
-        let names: [(Hotkeys.Action, String)] = [(.open, "打开最新一张"), (.tuck, "暂时收起 / 恢复"), (.closeAll, "全部关闭")]
+        let names: [(Hotkeys.Action, String)] = [
+            (.open, L10n.tr("打开最新一张", "Open newest card")),
+            (.tuck, L10n.tr("暂时收起 / 恢复", "Tuck aside / restore")),
+            (.closeAll, L10n.tr("全部关闭", "Close all")),
+        ]
         return names.compactMap { a, label in Hotkeys.shared.active[a].map { ($0.display, label) } }
     }
 
@@ -903,7 +1050,7 @@ struct ShortcutSheet: View {
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 20)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .peekGlass(in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .transition(.opacity.combined(with: .scale(scale: 0.96)))
         }

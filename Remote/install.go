@@ -58,14 +58,21 @@ func launcherOwned(path string) bool {
 	data, err := io.ReadAll(io.LimitReader(f, 8193))
 	return err == nil && len(data) <= 8192 && strings.HasPrefix(string(data), "#!/bin/sh\n"+launcherMark+"\n")
 }
+func sameRegularFile(a, b string) bool {
+	sa, errA := os.Stat(a)
+	sb, errB := os.Lstat(b)
+	return errA == nil && errB == nil && sb.Mode().IsRegular() && os.SameFile(sa, sb) && privateFile(b)
+}
 func install(home, exe string) (string, error) {
 	binDir := filepath.Join(home, ".local/share/peek/bin")
 	if err := privateHomeDir(home, ".local/share/peek/bin"); err != nil {
 		return "", err
 	}
 	fallback := filepath.Join(binDir, "peek-remote")
-	if err := atomicCopy(exe, fallback); err != nil {
-		return "", err
+	if !sameRegularFile(exe, fallback) {
+		if err := atomicCopy(exe, fallback); err != nil {
+			return "", err
+		}
 	}
 	launcherDir := filepath.Join(home, ".local/bin")
 	if err := os.MkdirAll(launcherDir, 0755); err != nil {

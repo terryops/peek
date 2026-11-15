@@ -3,22 +3,22 @@ import Combine
 
 @MainActor final class RemoteSettings: NSWindowController, NSTextFieldDelegate {
     private let connections: RemoteConnections
+    private let hostLabel = NSTextField(labelWithString: "")
     private let address = NSTextField(string: "")
-    private let connectButton = NSButton(title: "连接", target: nil, action: nil)
+    private let connectButton = NSButton(title: "", target: nil, action: nil)
     private let entryStatus = NSTextField(wrappingLabelWithString: "")
     private let rows = NSStackView()
     private var rowViews: [UUID: RemoteHostRow] = [:]
     private var subscriptions = Set<AnyCancellable>()
-    private var submittedID: UUID?
-    private var submittedAddress: String?
     private var entryError: String?
 
     init(connections: RemoteConnections) {
         self.connections = connections
-        let window = RemoteSettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 440),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "远程机器"
-        window.minSize = NSSize(width: 620, height: 330)
+        let window = RemoteSettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 420),
+                                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                                          backing: .buffered, defer: false)
+        window.title = L10n.tr("远程机器", "Remote Machines")
+        window.minSize = NSSize(width: 620, height: 300)
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.center()
@@ -32,17 +32,17 @@ import Combine
     required init?(coder: NSCoder) { fatalError() }
 
     func present() {
+        window?.title = L10n.tr("远程机器", "Remote Machines")
+        refreshEntry()
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
-        if connections.hosts.isEmpty { window?.makeFirstResponder(address) }
+        if connections.hosts.isEmpty || address.stringValue.isEmpty { window?.makeFirstResponder(address) }
     }
+
     private func build(_ window: NSWindow) {
         guard let content = window.contentView else { return }
-        let label = NSTextField(labelWithString: "SSH 主机")
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
-        address.placeholderString = "user@host 或 SSH 别名"
-        address.setAccessibilityLabel("SSH 主机")
+        hostLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         address.delegate = self
         address.target = self; address.action = #selector(submit)
         address.cell?.sendsActionOnEndEditing = false
@@ -51,15 +51,14 @@ import Combine
         connectButton.keyEquivalent = "\r"
         let input = NSStackView(views: [address, connectButton])
         input.orientation = .horizontal; input.spacing = 10
-        connectButton.widthAnchor.constraint(equalToConstant: 88).isActive = true
+        connectButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
         entryStatus.font = .systemFont(ofSize: 12)
-        entryStatus.textColor = .secondaryLabelColor
-        entryStatus.setAccessibilityLabel("连接状态")
-        let header = NSStackView(views: [label, input, entryStatus])
+        entryStatus.textColor = .systemRed
+        entryStatus.isHidden = true
+        let header = NSStackView(views: [hostLabel, input, entryStatus])
         header.orientation = .vertical; header.alignment = .leading; header.spacing = 8
         input.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
         entryStatus.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
-        entryStatus.heightAnchor.constraint(equalToConstant: 34).isActive = true
         let divider = NSBox(); divider.boxType = .separator
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true; scroll.drawsBackground = false
@@ -88,41 +87,35 @@ import Combine
             scroll.widthAnchor.constraint(equalTo: layout.widthAnchor),
         ])
     }
+
     func controlTextDidChange(_ notification: Notification) {
-        if address.stringValue != submittedAddress { submittedID = nil; entryError = nil }
+        entryError = nil
         refreshEntry()
     }
+
     @objc private func submit() {
-        if let id = submittedID, connections.hosts.contains(where: { $0.id == id }) {
-            switch connections.states[id] ?? .disconnected {
-            case .connecting, .installing, .reconnecting: connections.disconnect(id)
-            case .connected: connections.disconnect(id)
-            case .disconnected, .failed: connections.connect(id)
-            }
-        } else {
-            do {
-                let input = address.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                submittedID = try connections.add(address: input, label: input)
-                submittedAddress = address.stringValue
-                entryError = nil
-            } catch { entryError = error.localizedDescription }
+        do {
+            let input = address.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            _ = try connections.add(address: input, label: input)
+            address.stringValue = ""
+            entryError = nil
+        } catch {
+            entryError = error.localizedDescription
         }
         refresh()
     }
+
     private func refreshEntry() {
-        if let id = submittedID, connections.hosts.contains(where: { $0.id == id }) {
-            let state = connections.states[id] ?? .disconnected
-            connectButton.title = state.actionTitle
-            // The persisted host's status lives in its row. Keep this space
-            // reserved for input validation without moving the primary action.
-            entryStatus.stringValue = ""
-            entryStatus.textColor = .secondaryLabelColor
-        } else {
-            connectButton.title = "连接"
-            entryStatus.stringValue = entryError ?? ""
-            entryStatus.textColor = .systemRed
-        }
+        let fieldLabel = L10n.tr("SSH 主机", "SSH Host")
+        hostLabel.stringValue = fieldLabel
+        address.placeholderString = L10n.tr("user@host、user@host:端口 或 SSH 别名", "user@host, user@host:port, or SSH alias")
+        address.setAccessibilityLabel(fieldLabel)
+        entryStatus.setAccessibilityLabel(L10n.tr("连接状态", "Connection Status"))
+        connectButton.title = L10n.tr("连接", "Connect")
+        entryStatus.stringValue = entryError ?? ""
+        entryStatus.isHidden = (entryError == nil)
     }
+
     private func refresh() {
         let live = Set(connections.hosts.map(\.id))
         for id in Array(rowViews.keys) where !live.contains(id) {
@@ -136,37 +129,38 @@ import Combine
                 rowViews[host.id] = row; rows.addArrangedSubview(row)
                 row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
             }
-            row.update(connections.states[host.id] ?? .disconnected, command: connections.senderCommand(for: host.id))
+            row.update(host: host, state: connections.states[host.id] ?? .disconnected, command: connections.senderCommand(for: host.id))
         }
         refreshEntry()
     }
 }
 
 @MainActor private final class RemoteHostRow: NSView {
-    private let host: RemoteHost
+    private var host: RemoteHost
     private let connections: RemoteConnections
+    private let nameField = NSTextField(labelWithString: "")
     private let stateLabel = NSTextField(wrappingLabelWithString: "")
     private let commandField = NSTextField(labelWithString: "")
-    private let actionButton = NSButton(title: "连接", target: nil, action: nil)
-    private let copyButton = NSButton(title: "拷贝命令", target: nil, action: nil)
+    private let actionButton = NSButton(title: "", target: nil, action: nil)
+    private let copyButton = NSButton(title: "", target: nil, action: nil)
+    private let removeButton: NSButton
     private var command: String?
     private var copied = false
 
     init(host: RemoteHost, connections: RemoteConnections) {
         self.host = host; self.connections = connections
+        removeButton = NSButton(image: NSImage(systemSymbolName: "trash", accessibilityDescription: L10n.tr("移除连接", "Remove Connection"))!,
+                                target: nil, action: nil)
         super.init(frame: .zero)
-        let name = NSTextField(labelWithString: host.label)
-        name.font = .systemFont(ofSize: 13, weight: .semibold)
-        name.lineBreakMode = .byTruncatingMiddle
-        name.toolTip = host.address
+        nameField.font = .systemFont(ofSize: 13, weight: .semibold)
+        nameField.lineBreakMode = .byTruncatingMiddle
         actionButton.target = self; actionButton.action = #selector(act)
         copyButton.target = self; copyButton.action = #selector(copyCommand)
-        let remove = NSButton(image: NSImage(systemSymbolName: "trash", accessibilityDescription: "移除连接")!, target: self, action: #selector(removeHost))
-        remove.toolTip = "移除连接，保留已接收文件"
-        for button in [actionButton, copyButton, remove] { button.bezelStyle = .rounded }
-        actionButton.widthAnchor.constraint(equalToConstant: 82).isActive = true
-        copyButton.widthAnchor.constraint(equalToConstant: 90).isActive = true
-        let top = NSStackView(views: [name, NSView(), actionButton, copyButton, remove])
+        removeButton.target = self; removeButton.action = #selector(removeHost)
+        for button in [actionButton, copyButton, removeButton] { button.bezelStyle = .rounded }
+        actionButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
+        copyButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 96).isActive = true
+        let top = NSStackView(views: [nameField, NSView(), actionButton, copyButton, removeButton])
         top.orientation = .horizontal; top.spacing = 8
         stateLabel.font = .systemFont(ofSize: 12)
         commandField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
@@ -174,7 +168,7 @@ import Combine
         commandField.isSelectable = true
         commandField.lineBreakMode = .byTruncatingMiddle
         let layout = NSStackView(views: [top, stateLabel, commandField])
-        layout.orientation = .vertical; layout.alignment = .leading; layout.spacing = 5
+        layout.orientation = .vertical; layout.alignment = .leading; layout.spacing = 4
         layout.translatesAutoresizingMaskIntoConstraints = false
         addSubview(layout)
         NSLayoutConstraint.activate([
@@ -182,21 +176,27 @@ import Combine
             layout.topAnchor.constraint(equalTo: topAnchor), layout.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
             top.widthAnchor.constraint(equalTo: layout.widthAnchor), stateLabel.widthAnchor.constraint(equalTo: layout.widthAnchor),
             commandField.widthAnchor.constraint(equalTo: layout.widthAnchor),
-            stateLabel.heightAnchor.constraint(equalToConstant: 32), commandField.heightAnchor.constraint(equalToConstant: 16),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
-    func update(_ state: RemoteConnectionState, command: String?) {
+
+    func update(host: RemoteHost, state: RemoteConnectionState, command: String?) {
+        self.host = host
         if self.command != command { copied = false }
         self.command = command
+        nameField.stringValue = host.label
+        nameField.toolTip = host.address
+        removeButton.toolTip = L10n.tr("移除连接，保留已接收文件", "Remove connection (downloaded files are kept)")
         actionButton.title = state.actionTitle
         stateLabel.stringValue = state.statusText
         stateLabel.textColor = state.isFailure ? .systemRed : .secondaryLabelColor
         commandField.stringValue = command ?? ""
         commandField.toolTip = command
+        commandField.isHidden = (command == nil)
         copyButton.isEnabled = command != nil
-        copyButton.title = copied ? "已拷贝" : "拷贝命令"
+        copyButton.title = copied ? L10n.tr("已拷贝", "Copied") : L10n.tr("拷贝命令", "Copy Command")
     }
+
     @objc private func act() {
         switch connections.states[host.id] ?? .disconnected {
         case .connected, .connecting, .installing, .reconnecting: connections.disconnect(host.id)
@@ -207,7 +207,7 @@ import Combine
         guard let command else { return }
         NSPasteboard.general.clearContents()
         if NSPasteboard.general.setString(command, forType: .string) {
-            copied = true; copyButton.title = "已拷贝"
+            copied = true; copyButton.title = L10n.tr("已拷贝", "Copied")
         }
     }
     @objc private func removeHost() { connections.remove(host.id) }
@@ -216,19 +216,19 @@ import Combine
 private extension RemoteConnectionState {
     var actionTitle: String {
         switch self {
-        case .connecting, .installing, .reconnecting: return "取消"
-        case .connected: return "断开连接"
-        case .disconnected: return "连接"
-        case .failed: return "重试"
+        case .connecting, .installing, .reconnecting: return L10n.tr("取消", "Cancel")
+        case .connected: return L10n.tr("断开连接", "Disconnect")
+        case .disconnected: return L10n.tr("连接", "Connect")
+        case .failed: return L10n.tr("重试", "Retry")
         }
     }
     var statusText: String {
         switch self {
-        case .disconnected: return "已断开"
-        case .connecting: return "正在连接…"
-        case .installing: return "正在安装…"
-        case .connected: return "已连接"
-        case .reconnecting: return "正在重新连接…"
+        case .disconnected: return L10n.tr("已断开", "Disconnected")
+        case .connecting: return L10n.tr("正在连接…", "Connecting…")
+        case .installing: return L10n.tr("正在安装…", "Installing…")
+        case .connected: return L10n.tr("已连接", "Connected")
+        case .reconnecting: return L10n.tr("正在重新连接…", "Reconnecting…")
         case .failed(let error): return error.trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }

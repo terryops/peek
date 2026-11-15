@@ -41,11 +41,29 @@ enum RemoteConnectionState: Equatable {
         }
         states = Dictionary(uniqueKeysWithValues: hosts.map { ($0.id, .disconnected) })
     }
-    @discardableResult func add(address: String, label: String) throws -> UUID {
-        let address = address.trimmingCharacters(in: .whitespacesAndNewlines)
+    @discardableResult func add(address rawAddress: String, label: String) throws -> UUID {
+        let trimmed = rawAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = SSHConnection.normalize(address: trimmed)
         try SSHConnection.validate(address: address)
+        let explicitLabel = label.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        let defaultLabel = address.hasPrefix("ssh://") ? String(address.dropFirst(6)) : address
+        let cleanLabel = explicitLabel ?? defaultLabel
+        if let index = hosts.firstIndex(where: { $0.address == address }) {
+            let id = hosts[index].id
+            if let explicitLabel, hosts[index].label != explicitLabel {
+                hosts[index].label = explicitLabel
+                try? persist()
+            }
+            switch states[id] ?? .disconnected {
+            case .connected, .connecting, .installing:
+                break
+            case .disconnected, .failed, .reconnecting:
+                connect(id)
+            }
+            return id
+        }
         let id = UUID()
-        hosts.append(RemoteHost(id: id, address: address, label: label.nonEmpty ?? address, enabled: true))
+        hosts.append(RemoteHost(id: id, address: address, label: cleanLabel, enabled: true))
         do { try persist() } catch { hosts.removeAll { $0.id == id }; throw error }
         connect(id)
         return id
@@ -60,7 +78,8 @@ enum RemoteConnectionState: Equatable {
         do { try persist() } catch {
             invalidate(id)
             hosts[index].enabled = false
-            states[id] = .failed("无法保存连接：\(error.localizedDescription)")
+            states[id] = .failed(L10n.tr("无法保存连接：\(error.localizedDescription)",
+                                         "Cannot save connection: \(error.localizedDescription)"))
             return
         }
         backoff[id] = 0
@@ -103,7 +122,9 @@ enum RemoteConnectionState: Equatable {
                 self.commands.removeValue(forKey: id)
                 if authenticationCancelled {
                     self.disconnect(id)
-                    if self.states[id] == .disconnected { self.states[id] = .failed("SSH 验证已取消") }
+                    if self.states[id] == .disconnected {
+                        self.states[id] = .failed(L10n.tr("SSH 验证已取消", "SSH verification cancelled"))
+                    }
                 } else if wasReady || reconnecting {
                     self.scheduleReconnect(id, generation: endedGeneration)
                 } else { self.states[id] = .failed(error) }
@@ -126,7 +147,10 @@ enum RemoteConnectionState: Equatable {
         guard let index = hosts.firstIndex(where: { $0.id == id }) else { return }
         hosts[index].enabled = false
         invalidate(id); states[id] = .disconnected
-        do { try persist() } catch { states[id] = .failed("连接已断开，无法保存：\(error.localizedDescription)") }
+        do { try persist() } catch {
+            states[id] = .failed(L10n.tr("连接已断开，无法保存：\(error.localizedDescription)",
+                                         "Disconnected, failed to save: \(error.localizedDescription)"))
+        }
     }
     func remove(_ id: UUID) {
         invalidate(id)
@@ -135,7 +159,8 @@ enum RemoteConnectionState: Equatable {
         do { try persist() } catch {
             removed.enabled = false
             hosts.insert(removed, at: index)
-            states[id] = .failed("连接已断开，无法移除：\(error.localizedDescription)")
+            states[id] = .failed(L10n.tr("连接已断开，无法移除：\(error.localizedDescription)",
+                                         "Disconnected, failed to remove: \(error.localizedDescription)"))
             return
         }
         states.removeValue(forKey: id); generations.removeValue(forKey: id); backoff.removeValue(forKey: id)

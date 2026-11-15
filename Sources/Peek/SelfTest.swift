@@ -11,6 +11,10 @@ enum SelfTest {
     }
 
     static func run() -> Int32 {
+        failures = 0
+        passes = 0
+        L10n.override = .zh
+        defer { L10n.override = nil }
         guard let home = ProcessInfo.processInfo.environment["PEEK_HOME"], !home.isEmpty,
               Paths.root.path.hasPrefix(home) else {
             print("✗ 需要 PEEK_HOME 指向临时目录")
@@ -20,10 +24,15 @@ enum SelfTest {
         try? fm.removeItem(at: Paths.root)
         Paths.ensure()
 
-        // Relative time
+        // Relative time (zh + en)
         let now = Date()
         check(RelativeTime.string(now.addingTimeInterval(-10), now: now) == "刚刚", "刚刚")
         check(RelativeTime.string(now.addingTimeInterval(-300), now: now) == "5 分钟前", "5 分钟前")
+        L10n.override = .en
+        check(RelativeTime.string(now.addingTimeInterval(-10), now: now) == "Just now", "Just now (en)")
+        check(RelativeTime.string(now.addingTimeInterval(-300), now: now) == "5m ago", "5m ago (en)")
+        L10n.override = .zh
+        check(CLI.main(["--version"]) == 0, "--version")
 
         // Push two files with the same name from different folders + one more.
         let work = Paths.root.appendingPathComponent("work")
@@ -90,6 +99,19 @@ enum SelfTest {
             check(fm.fileExists(atPath: files.appendingPathComponent("css/app.css").path)
                   && fm.fileExists(atPath: files.appendingPathComponent("img/logo.png").path)
                   && !fm.fileExists(atPath: html.dir.appendingPathComponent("outside.png").path), "资源跟着复制、不越出文件夹")
+        }
+        // Multi-HTML asset isolation & symlink containment
+        let site2 = work.appendingPathComponent("site2")
+        try? fm.createDirectory(at: site2.appendingPathComponent("img"), withIntermediateDirectories: true)
+        writePNG(site2.appendingPathComponent("img/logo.png"), color: .systemOrange, size: 32)
+        try? fm.createSymbolicLink(at: site2.appendingPathComponent("img/escape.png"), withDestinationURL: work.appendingPathComponent("outside.png"))
+        try? "<img src=\"img/logo.png\"><img src=\"img/escape.png\">".write(to: site2.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        check(CLI.push([site.appendingPathComponent("index.html").path, site2.appendingPathComponent("index.html").path], title: "双页", source: nil) == 0, "推两个同名资源 HTML")
+        if let pair = Store.loadAll().first {
+            let size0 = (try? fm.attributesOfItem(atPath: pair.urls[0].deletingLastPathComponent().appendingPathComponent("img/logo.png").path)[.size] as? Int) ?? 0
+            let size1 = (try? fm.attributesOfItem(atPath: pair.urls[1].deletingLastPathComponent().appendingPathComponent("img/logo.png").path)[.size] as? Int) ?? 0
+            check(size0 > 0 && size1 > 0 && size0 != size1, "两个 HTML 同名资源互不覆盖")
+            check(!fm.fileExists(atPath: pair.urls[1].deletingLastPathComponent().appendingPathComponent("img/escape.png").path), "越界符号链接不复制")
         }
         let md = WebDoc.renderMarkdown("# 标题\n\n</script><b>x</b>", title: "t")
         check(md.contains("marked") || md.contains("<pre"), "Markdown 渲染页生成")

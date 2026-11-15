@@ -32,9 +32,21 @@ struct ViewerSwipeTests {
 
     @Test func comparisonIncludesImagesAfterTheFourth() async throws {
         try await withViewer(fileCount: 5) { viewer, window in
+            for _ in 0..<50 {
+                let strip = window.contentView?.subviews.compactMap { $0 as? NSHostingView<FilmstripView> }.first
+                if strip?.rootView.m.thumbs.count == 5 { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let strip = try #require(window.contentView?.subviews.compactMap { $0 as? NSHostingView<FilmstripView> }.first)
+            #expect(strip.rootView.m.thumbs.count == 5)
             viewer.toggleCompare()
             let comparison = try #require(window.contentView?.subviews.compactMap { $0 as? NSHostingView<CompareView> }.first)
             #expect(comparison.rootView.images.count == 5)
+            #expect(comparison.rootView.names.count == 5)
+            viewer.zoom(.zoomIn)
+            #expect(comparison.rootView.zoom.scale > 1)
+            viewer.zoom(.fit)
+            #expect(comparison.rootView.zoom.scale == 1)
         }
     }
 

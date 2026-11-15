@@ -4,7 +4,7 @@ Peek 在本机预览图片、PDF、Markdown 和 HTML，不需要连接远程机�
 
 ## 安装命令
 
-下载并解压 [Mac 安装包](https://github.com/terryops/peek/releases/latest)，将 `Peek.app` 放进「应用程序」并打开，然后在终端执行：
+下载并解压 [Mac 安装包](https://github.com/terryops/peek/releases/latest)，将 `Peek.app` 放进「应用程序」并打开。可在菜单栏点击「安装 peek 命令」并勾选「登录时打开」，或在终端执行：
 
 ```sh
 mkdir -p "$HOME/bin"

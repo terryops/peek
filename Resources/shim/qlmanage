@@ -5,10 +5,13 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 PEEK=""
 for candidate in \
     "${SELF_DIR:+$SELF_DIR/../../MacOS/Peek}" \
-    "/Applications/Peek.app/Contents/MacOS/Peek" \
-    "$HOME/Applications/Peek.app/Contents/MacOS/Peek"
+    "$HOME/Applications/Peek.app/Contents/MacOS/Peek" \
+    "/Applications/Peek.app/Contents/MacOS/Peek"
 do
-    if [[ -n "$candidate" && -x "$candidate" ]]; then PEEK="$candidate"; break; fi
+    if [[ -n "$candidate" && -x "$candidate" && -x "${candidate%/MacOS/Peek}/Resources/ssh-askpass" ]]; then
+        PEEK="$candidate"
+        break
+    fi
 done
 [[ -n "$PEEK" && -z "${PEEK_OFF:-}" && "${1:-}" == "-p" ]] || exec "$REAL" "$@"
 shift

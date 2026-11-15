@@ -11,10 +11,100 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
+
+type senderOptions struct {
+	title        string
+	conversation string
+	source       string
+	to           string
+	listTargets  bool
+	showVersion  bool
+	showHelp     bool
+	files        []string
+}
+
+func printSenderUsage(w io.Writer) {
+	fmt.Fprintln(w, "Usage: peek [-t|--title title] [-c|--conversation name] [-s|--source source] [--to target] files…\n       peek --list-targets | --version | --help")
+}
+
+func parseSenderArgs(args []string) (senderOptions, error) {
+	opts := senderOptions{
+		conversation: os.Getenv("PEEK_CONVERSATION"),
+		source:       os.Getenv("PEEK_SOURCE"),
+		to:           os.Getenv("PEEK_TARGET"),
+	}
+	optionsDone := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !optionsDone {
+			if a == "--" {
+				optionsDone = true
+				continue
+			}
+			if strings.HasPrefix(a, "-") && len(a) > 1 {
+				name, val, hasEq := strings.Cut(a, "=")
+				nextVal := func() (string, error) {
+					if hasEq {
+						return val, nil
+					}
+					if i+1 >= len(args) {
+						return "", fmt.Errorf("flag needs an argument: %s", name)
+					}
+					i++
+					return args[i], nil
+				}
+				switch name {
+				case "-h", "-help", "--help":
+					opts.showHelp = true
+					continue
+				case "-v", "-version", "--version":
+					opts.showVersion = true
+					continue
+				case "-list-targets", "--list-targets":
+					opts.listTargets = true
+					continue
+				case "-t", "--t", "-title", "--title":
+					v, err := nextVal()
+					if err != nil {
+						return opts, err
+					}
+					opts.title = v
+					continue
+				case "-c", "--c", "-conversation", "--conversation":
+					v, err := nextVal()
+					if err != nil {
+						return opts, err
+					}
+					opts.conversation = v
+					continue
+				case "-s", "--s", "-source", "--source":
+					v, err := nextVal()
+					if err != nil {
+						return opts, err
+					}
+					opts.source = v
+					continue
+				case "-to", "--to":
+					v, err := nextVal()
+					if err != nil {
+						return opts, err
+					}
+					opts.to = v
+					continue
+				default:
+					return opts, fmt.Errorf("unknown flag: %s", name)
+				}
+			}
+		}
+		opts.files = append(opts.files, a)
+	}
+	return opts, nil
+}
 
 func lookPathPeek() (string, error) { return exec.LookPath("peek") }
 func defaultCommand(home string) string {
@@ -57,28 +147,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return bridge(ctx, home, *id, *name, *command, os.Stdin, stdout)
 	}
-	flags := flag.NewFlagSet("peek", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	title := flags.String("t", "", "title")
-	conversation := flags.String("c", os.Getenv("PEEK_CONVERSATION"), "conversation")
-	source := flags.String("s", "project", "source")
-	to := flags.String("to", os.Getenv("PEEK_TARGET"), "target UUID or unique name")
-	list := flags.Bool("list-targets", false, "list online targets")
-	showVersion := flags.Bool("version", false, "show version")
-	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: peek [-t title] [-c conversation] [-s source] [--to target] files…\n       peek --list-targets | --version | --help")
-	}
-	if err := flags.Parse(args); err != nil {
-		if err == flag.ErrHelp {
-			return nil
-		}
+	opts, err := parseSenderArgs(args)
+	if err != nil {
+		printSenderUsage(stderr)
 		return err
 	}
-	if *showVersion {
+	if opts.showHelp {
+		printSenderUsage(stderr)
+		return nil
+	}
+	if opts.showVersion {
 		fmt.Fprintf(stdout, "peek-remote %s (protocol 1)\n", version)
 		return nil
 	}
-	if *list {
+	if opts.listTargets {
 		ts, err := discover(home)
 		if err != nil {
 			return err
@@ -88,15 +170,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	}
-	if flags.NArg() == 0 {
-		flags.Usage()
+	if len(opts.files) == 0 {
+		printSenderUsage(stderr)
 		return fmt.Errorf("at least one file is required")
 	}
-	m, files, err := collect(flags.Args(), *title, *conversation, *source)
+	m, files, err := collect(opts.files, opts.title, opts.conversation, opts.source)
 	if err != nil {
 		return err
 	}
-	if err := send(ctx, home, *to, m, files); err != nil {
+	if err := send(ctx, home, opts.to, m, files); err != nil {
 		return err
 	}
 	fmt.Fprintln(stdout, "Delivered to Peek")

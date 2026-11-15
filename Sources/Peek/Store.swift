@@ -166,12 +166,20 @@ enum Store {
         return now.timeIntervalSince(date)
     }
 
-    static func makeID(_ date: Date = Date()) -> String {
+    private static let idLock = NSLock()
+    private static let idFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyyMMdd-HHmmss-SSS"
+        return f
+    }()
+
+    static func makeID(_ date: Date = Date()) -> String {
+        idLock.lock()
+        let stamp = idFormatter.string(from: date)
+        idLock.unlock()
         let tail = String(UUID().uuidString.prefix(4)).lowercased()
-        return "\(f.string(from: date))-\(tail)"
+        return "\(stamp)-\(tail)"
     }
 }
 

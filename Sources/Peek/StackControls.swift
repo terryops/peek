@@ -69,7 +69,7 @@ struct PillView: View {
         .foregroundStyle(m.hovered ? .primary : .secondary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Capsule().fill(Color.primary.opacity(m.hovered ? 0.07 : 0)))
-        .glassEffect(.regular, in: Capsule())
+        .peekGlass(in: Capsule())
         .scaleEffect(m.pressed ? 0.95 : 1)
         .animation(.easeOut(duration: 0.12), value: m.hovered)
         .animation(.spring(response: 0.24, dampingFraction: 0.7), value: m.pressed)
@@ -80,7 +80,9 @@ final class StackPill {
     static let height: CGFloat = 26
     static let fontSize: CGFloat = 11.5
     static var swiftUIFont: Font { .system(size: fontSize, weight: .medium) }
-    static func title(tucked: Bool) -> String { tucked ? "保持展开" : "暂时收起" }
+    static func title(tucked: Bool) -> String {
+        tucked ? L10n.tr("保持展开", "Keep Open") : L10n.tr("暂时收起", "Tuck Aside")
+    }
 
     let model = PillModel()
     let panel: CardPanel
@@ -174,7 +176,7 @@ struct TabView: View {
         .offset(x: 1)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(shape.fill(Color.primary.opacity(m.hovered ? 0.07 : 0)))
-        .glassEffect(.regular, in: shape)
+        .peekGlass(in: shape)
         .scaleEffect(m.bump ? 1.12 : 1, anchor: .trailing)
         .animation(.easeOut(duration: 0.12), value: m.hovered)
         .animation(.spring(response: 0.3, dampingFraction: 0.5), value: m.bump)
@@ -224,7 +226,9 @@ final class EdgeTab {
         if model.thumb !== thumb { model.thumb = thumb }
         if model.count != count { model.count = count }
         if model.unread != unread { model.unread = unread }
-        touch.label = unread > 0 ? "已收起，\(unread) 张未查看，展开" : "已收起 \(count) 张卡片，展开"
+        touch.label = unread > 0
+            ? L10n.tr("已收起，\(unread) 张未查看，展开", "Tucked, \(unread) unread, expand")
+            : L10n.tr("已收起 \(count) 张卡片，展开", "Tucked \(count) cards, expand")
     }
 
     func show(delay: TimeInterval = 0.1) {

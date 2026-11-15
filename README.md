@@ -4,7 +4,7 @@ English · [简体中文](README.zh-CN.md) · [Manual Usage & Shortcuts](docs/ma
 
 Native macOS floating preview cards for AI Agents (Claude Code, Codex, Cursor, Windsurf, OpenClaw, etc.). Instead of popping up Preview or a browser and stealing your keyboard focus—or leaving bare file paths in chat—agents push **images, PDFs, Markdown, and HTML** to non-activating cards in the top-right corner of your screen. Click a card when you are ready to inspect it, press `Esc` to return right where you were typing, or press `↩` to jump straight back to the agent session that sent it.
 
-[**Download Universal Mac App**](https://github.com/terryops/peek/releases/latest) · macOS 26+ (Apple Silicon & Intel) · Signed & Notarized · [MIT License](LICENSE)
+[**Download Universal Mac App**](https://github.com/terryops/peek/releases/latest) · macOS 14+ (Apple Silicon & Intel) · Signed & Notarized · [MIT License](LICENSE)
 
 <p align="center">
   <img src="docs/screenshots/demo.gif" alt="Peek demo: an AI agent pushes files to a top-right floating card without stealing focus from the chat window, opens side-by-side comparison on click, and returns focus on Esc" width="840">
@@ -15,7 +15,7 @@ Native macOS floating preview cards for AI Agents (Claude Code, Codex, Cursor, W
 ### On your Mac
 
 1. Download `Peek-universal.zip` from [GitHub Releases](https://github.com/terryops/peek/releases/latest), move `Peek.app` into `/Applications`, and open it.
-2. Link `peek` onto your `PATH` so local agents can invoke it directly:
+2. Click the Peek menu bar icon → **Install 'peek' Command** (and optionally enable **Launch at Login**), or link `~/.local`/`~/bin` manually:
 
 ```sh
 mkdir -p "$HOME/bin"
@@ -26,7 +26,7 @@ Make sure `$HOME/bin` is in your shell `PATH` (for example, `export PATH="$HOME/
 
 ### On remote SSH servers *(optional)*
 
-If your agents run on remote Linux or macOS machines (`amd64` / `arm64`), click the Peek menu bar icon → **远程机器…** (*Remote Machines*), enter your SSH alias or `user@host`, and click **连接** (*Connect*). Peek installs `~/.local/bin/peek` on the remote host over your existing `/usr/bin/ssh` setup (`~/.ssh/config`, keys, SSH agent, JumpHosts) with no cloud relay or inbound ports—remote agents can then push cards straight to your Mac.
+If your agents run on remote Linux or macOS machines (`amd64` / `arm64`), click the Peek menu bar icon → **Remote Machines…** (*远程机器…*), enter your SSH alias, `user@host`, or `user@host:port`, and click **Connect**. Peek installs `~/.local/bin/peek` on the remote host over your existing `/usr/bin/ssh` setup (`~/.ssh/config`, keys, SSH agent, JumpHosts) with no cloud relay or inbound ports—remote agents can then push cards straight to your Mac.
 
 ## 2. Add Rule to `CLAUDE.md` / `AGENTS.md`
 
@@ -60,9 +60,9 @@ peek -c "UI Subagent" -t "Dark Mode Check" settings-dark.png
 ```
 
 - **Supported formats** — Images (`png`, `jpg`, `webp`, `gif`, `svg`, `heic`, `avif`, `tiff`, `bmp`), `pdf`, `md` (GitHub Flavored Markdown), and `html` (sandboxed `WKWebView`; external web links open in the default browser).
-- **Flags before file paths** — Always place `-t "<title>"` and `-c "<source>"` before `<file…>` so commands work identically on macOS `peek` and remote SSH `peek`. When `-t` is omitted, single-file cards use HTML `<title>`, the first Markdown `# ` heading, or the filename.
-- **Safe to overwrite output paths** — Local files are cloned instantly on APFS with zero extra disk space; remote pushes bundle up to 300 referenced assets (64 MiB max) and save originals to `~/Downloads/Peek/<host>/`. Agents can reuse fixed paths like `/tmp/check.png` or `build/report.md` across iterations without mutating earlier cards.
-- **Multi-agent session attribution & jump-back (`↩`)** — When multiple local agents run in parallel, Peek automatically tags each card with its originating Claude Code session (`/rename` name or first prompt), Rex pane, or terminal app. Pressing `↩` (or clicking **回到对话**) jumps straight back to the window or pane that sent that card.
+- **Flexible flags** — Short (`-t`, `-c`, `-s`) and long (`--title`, `--conversation`, `--source`, `--flag=value`) options work anywhere before `--` on both local macOS `peek` and remote SSH `peek`. When `-t` is omitted, single-file cards use HTML `<title>`, the first Markdown `# ` heading, or the filename.
+- **Safe to overwrite output paths** — Local files are cloned instantly on APFS with zero extra disk space; remote pushes bundle up to 300 referenced assets (64 MiB max) and save originals to `~/Downloads/Peek/<host>/<timestamp>_<title>_<id>/`. Agents can reuse fixed paths like `/tmp/check.png` or `build/report.md` across iterations without mutating earlier cards.
+- **Multi-agent session attribution & jump-back (`↩`)** — When multiple local agents run in parallel, Peek automatically tags each card with its originating Claude Code session (`/rename` name or first prompt), Rex pane, or terminal app. Pressing `↩` (or clicking **Jump to Session** / **回到对话**) jumps straight back to the window or pane that sent that card.
 
 <p align="center">
   <img src="docs/screenshots/markdown-viewer.png" alt="Agent-pushed Markdown report rendered with bundled local chart assets" width="840">

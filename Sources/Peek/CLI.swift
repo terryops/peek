@@ -1,14 +1,29 @@
 import AppKit
 
 enum CLI {
-    static let usage = """
-    用法：
-      peek [-t 标题] [-c 对话名] 文件…   推到屏幕右上角的卡片，点卡片才打开（图片 / PDF / Markdown / HTML）
-      peek --remote-settings   管理远程机器
-      peek --list              列出 24 小时内的卡片
-      peek --clear             全部清空
-      peek --quit              退出后台的 Peek
-    """
+    static var versionString: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?.nonEmpty ?? "1.1.0"
+    }
+
+    static var usage: String {
+        L10n.tr("""
+        用法：
+          peek [-t 标题] [-c 对话名] 文件…   推到屏幕右上角的卡片，点卡片才打开（图片 / PDF / Markdown / HTML）
+          peek --remote-settings   管理远程机器
+          peek --list              列出 24 小时内的卡片
+          peek --clear             全部清空
+          peek --quit              退出后台的 Peek
+          peek --version           查看版本
+        """, """
+        Usage:
+          peek [-t title] [-c session] files…   Push to a top-right preview card (images / PDF / Markdown / HTML)
+          peek --remote-settings   Manage remote SSH machines
+          peek --list              List cards from the last 24 hours
+          peek --clear             Clear all cards and cached snapshots
+          peek --quit              Quit background Peek app
+          peek --version           Show version
+        """)
+    }
 
     static func main(_ args: [String]) -> Int32 {
         var title: String?
@@ -19,18 +34,38 @@ enum CLI {
         while i < args.count {
             let a = args[i]
             if !optionsDone {
-                switch a {
+                if a == "--" {
+                    optionsDone = true
+                    i += 1
+                    continue
+                }
+                let eq = a.firstIndex(of: "=")
+                let flag = eq.map { String(a[..<$0]) } ?? a
+                let inlineVal = eq.map { String(a[a.index(after: $0)...]) }
+                switch flag {
                 case "-h", "--help":
                     print(usage)
                     return 0
+                case "-v", "--version":
+                    print("Peek \(versionString)")
+                    return 0
                 case "-t", "--title", "-s", "--source", "-c", "--conversation":
-                    guard i + 1 < args.count else { return fail("\(a) 后面要跟内容") }
-                    switch a {
-                    case "-t", "--title": title = args[i + 1]
-                    case "-c", "--conversation": setenv("PEEK_CONVERSATION", args[i + 1], 1)
-                    default: source = args[i + 1]
+                    let value: String
+                    if let inlineVal {
+                        value = inlineVal
+                        i += 1
+                    } else {
+                        guard i + 1 < args.count else {
+                            return fail(L10n.tr("\(flag) 后面要跟内容", "\(flag) requires a value"))
+                        }
+                        value = args[i + 1]
+                        i += 2
                     }
-                    i += 2
+                    switch flag {
+                    case "-t", "--title": title = value
+                    case "-c", "--conversation": setenv("PEEK_CONVERSATION", value, 1)
+                    default: source = value
+                    }
                     continue
                 case "--remote-settings":
                     return requestRemoteSettings()
@@ -40,7 +75,7 @@ enum CLI {
                     Paths.ensure()
                     Store.removeAll()
                     notify(Paths.changed)
-                    print("已清空")
+                    print(L10n.tr("已清空", "Cleared"))
                     return 0
                 case "--quit":
                     notify(Paths.quit)
@@ -52,12 +87,10 @@ enum CLI {
                     return 0
                 case "--selftest":
                     return SelfTest.run()
-                case "--":
-                    optionsDone = true
-                    i += 1
-                    continue
                 default:
-                    if a.hasPrefix("-") && a.count > 1 { return fail("不认识的参数：\(a)\n\(usage)") }
+                    if a.hasPrefix("-") && a.count > 1 {
+                        return fail(L10n.tr("不认识的参数：\(a)\n\(usage)", "Unknown option: \(a)\n\(usage)"))
+                    }
                 }
             }
             paths.append(a)
@@ -76,7 +109,9 @@ enum CLI {
         do {
             _ = try publish(paths, title: title, source: source, origin: origin, preserveGroups: preserveGroups)
             return 0
-        } catch { return fail("推送失败：\(error.localizedDescription)") }
+        } catch {
+            return fail(L10n.tr("推送失败：\(error.localizedDescription)", "Push failed: \(error.localizedDescription)"))
+        }
     }
 
     /// Returns the identity created by this atomic publication, independently of
@@ -91,8 +126,12 @@ enum CLI {
         for p in paths {
             let url = URL(fileURLWithPath: (p as NSString).expandingTildeInPath, relativeTo: cwd).standardizedFileURL
             var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { throw RemoteError.invalid("找不到文件：\(p)") }
-            guard !isDir.boolValue else { throw RemoteError.invalid("这是文件夹，不是文件：\(p)") }
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else {
+                throw RemoteError.invalid(L10n.tr("找不到文件：\(p)", "File not found: \(p)"))
+            }
+            guard !isDir.boolValue else {
+                throw RemoteError.invalid(L10n.tr("这是文件夹，不是文件：\(p)", "Is a directory, not a file: \(p)"))
+            }
             sources.append(url)
         }
 
@@ -101,6 +140,7 @@ enum CLI {
         let id = Store.makeID(now)
         let stage = Paths.incoming.appendingPathComponent(id, isDirectory: true)
         let filesDir = stage.appendingPathComponent("files", isDirectory: true)
+        let isolateLocalGroups = !preserveGroups && sources.count > 1 && sources.contains(where: WebDoc.isWeb)
         let published: PeekItem
         do {
             try fm.createDirectory(at: filesDir, withIntermediateDirectories: true)
@@ -109,24 +149,31 @@ enum CLI {
             for (index, url) in sources.enumerated() {
                 try cancellation?.check()
                 var stored = url.lastPathComponent
-                var n = 2
-                while used.contains(stored.lowercased()) {
-                    let base = (url.lastPathComponent as NSString).deletingPathExtension
-                    let ext = url.pathExtension
-                    stored = ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)"
-                    n += 1
-                }
-                used.insert(stored.lowercased())
                 if preserveGroups {
                     let group = String(index)
                     try fm.copyItem(at: url.deletingLastPathComponent(), to: filesDir.appendingPathComponent(group))
                     stored = group + "/" + url.lastPathComponent
+                } else if isolateLocalGroups {
+                    let group = String(index)
+                    let groupDir = filesDir.appendingPathComponent(group, isDirectory: true)
+                    try fm.createDirectory(at: groupDir, withIntermediateDirectories: true)
+                    try fm.copyItem(at: url, to: groupDir.appendingPathComponent(url.lastPathComponent))
+                    stored = group + "/" + url.lastPathComponent
+                    Assets.copy(for: url, into: groupDir)
                 } else {
+                    var n = 2
+                    while used.contains(stored.lowercased()) {
+                        let base = (url.lastPathComponent as NSString).deletingPathExtension
+                        let ext = url.pathExtension
+                        stored = ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)"
+                        n += 1
+                    }
+                    used.insert(stored.lowercased())
                     // copyItem clones on APFS: instant and no extra space.
                     try fm.copyItem(at: url, to: filesDir.appendingPathComponent(stored))
+                    Assets.copy(for: url, into: filesDir)
                 }
                 files.append(PeekFile(name: url.lastPathComponent, stored: stored, original: url.path))
-                if !preserveGroups { Assets.copy(for: url, into: filesDir) }
             }
             let title = title ?? (sources.count == 1 ? Assets.title(of: sources[0]) : nil)
             var item = PeekItem(id: id, created: now, title: title,
@@ -147,7 +194,8 @@ enum CLI {
             notify(Paths.changed)
             ensureAppRunning()
         }
-        print("已推到右上角卡片：" + sources.map(\.lastPathComponent).joined(separator: "、"))
+        let names = sources.map(\.lastPathComponent).joined(separator: L10n.tr("、", ", "))
+        print(L10n.tr("已推到右上角卡片：\(names)", "Pushed to card: \(names)"))
         return published
     }
 
@@ -175,12 +223,12 @@ enum CLI {
         let real = (Bundle.main.executableURL ?? exe).resolvingSymlinksInPath()
         for candidate in [real, exe] {
             let app = candidate.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            if app.pathExtension == "app" { return app }
+            if app.pathExtension == "app", Bundle(url: app)?.bundleIdentifier == Paths.bundleID { return app }
         }
         for dir in [
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Peek.app"),
             URL(fileURLWithPath: "/Applications/Peek.app"),
-        ] where FileManager.default.fileExists(atPath: dir.path) {
+        ] where FileManager.default.fileExists(atPath: dir.path) && Bundle(url: dir)?.bundleIdentifier == Paths.bundleID {
             return dir
         }
         return nil
@@ -193,7 +241,10 @@ enum CLI {
     static func requestRemoteSettings() -> Int32 {
         Paths.ensure()
         do { try Data(UUID().uuidString.utf8).write(to: settingsRequest, options: .atomic) }
-        catch { return fail("无法打开远程机器：\(error.localizedDescription)") }
+        catch {
+            return fail(L10n.tr("无法打开远程机器：\(error.localizedDescription)",
+                                "Cannot open Remote Machines: \(error.localizedDescription)"))
+        }
         notify(settingsNotification)
         if ProcessInfo.processInfo.environment["PEEK_HOME"] == nil { ensureAppRunning() }
         return 0
@@ -233,19 +284,23 @@ enum CLI {
 
     // MARK: list
 
+    private static let listFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
     static func list() -> Int32 {
         let items = Store.loadAll()
         if items.isEmpty {
-            print("没有卡片")
+            print(L10n.tr("没有卡片", "No cards"))
             return 0
         }
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
         for item in items {
             let mark = item.seen ? " " : "●"
-            let state = item.dismissed ? "（已收起）" : ""
+            let state = item.dismissed ? L10n.tr("（已收起）", " (dismissed)") : ""
             let extra = item.files.count > 1 ? " +\(item.files.count - 1)" : ""
-            print("\(mark) \(f.string(from: item.created))  \(item.source)  \(item.displayTitle)\(extra)\(state)")
+            print("\(mark) \(listFormatter.string(from: item.created))  \(item.source)  \(item.displayTitle)\(extra)\(state)")
         }
         return 0
     }

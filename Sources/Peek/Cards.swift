@@ -126,8 +126,13 @@ final class CardInteractionView: NSView, NSDraggingSource {
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
     override func accessibilityLabel() -> String? {
         guard let item = card?.model.item else { return nil }
-        let state = item.seen ? "" : "，未查看"
-        return "\(item.displayTitle)，来自\(item.conversationTitle)\(state)"
+        if L10n.isChinese {
+            let state = item.seen ? "" : "，未查看"
+            return "\(item.displayTitle)，来自\(item.conversationTitle)\(state)"
+        } else {
+            let state = item.seen ? "" : ", unread"
+            return "\(item.displayTitle), from \(item.conversationTitle)\(state)"
+        }
     }
     override func accessibilityPerformPress() -> Bool {
         card?.open()
@@ -136,12 +141,12 @@ final class CardInteractionView: NSView, NSDraggingSource {
     override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
         guard let card else { return nil }
         var actions = [
-            NSAccessibilityCustomAction(name: "关闭") { card.close(all: false); return true },
-            NSAccessibilityCustomAction(name: "在访达中显示") { card.reveal(); return true },
-            NSAccessibilityCustomAction(name: "拷贝") { card.copyFiles(); return true },
+            NSAccessibilityCustomAction(name: L10n.tr("关闭", "Close")) { card.close(all: false); return true },
+            NSAccessibilityCustomAction(name: L10n.tr("在访达中显示", "Reveal in Finder")) { card.reveal(); return true },
+            NSAccessibilityCustomAction(name: L10n.tr("拷贝", "Copy")) { card.copyFiles(); return true },
         ]
         if card.model.item.origin?.canJump ?? false {
-            actions.append(NSAccessibilityCustomAction(name: "回到对话") { card.jump(); return true })
+            actions.append(NSAccessibilityCustomAction(name: L10n.tr("回到对话", "Jump to Session")) { card.jump(); return true })
         }
         return actions
     }
@@ -334,14 +339,14 @@ final class Card: NSObject {
             if let hotkey { Hotkeys.shared.decorate(item, hotkey) }
             menu.addItem(item)
         }
-        add("打开", #selector(menuOpen))
-        if model.item.origin?.canJump ?? false { add("回到对话", #selector(menuJump)) }
-        add("在访达中显示", #selector(menuReveal))
-        add("拷贝", #selector(menuCopy))
+        add(L10n.tr("打开", "Open"), #selector(menuOpen))
+        if model.item.origin?.canJump ?? false { add(L10n.tr("回到对话", "Jump to Session"), #selector(menuJump)) }
+        add(L10n.tr("在访达中显示", "Reveal in Finder"), #selector(menuReveal))
+        add(L10n.tr("拷贝", "Copy"), #selector(menuCopy))
         menu.addItem(.separator())
-        add("暂时收起", #selector(menuTuck), .tuck)
-        add("关闭", #selector(menuClose))
-        add("全部关闭", #selector(menuCloseAll), .closeAll)
+        add(L10n.tr("暂时收起", "Tuck Aside"), #selector(menuTuck), .tuck)
+        add(L10n.tr("关闭", "Close"), #selector(menuClose))
+        add(L10n.tr("全部关闭", "Close All"), #selector(menuCloseAll), .closeAll)
         return menu
     }
 
@@ -675,6 +680,7 @@ final class CardStack {
 
     private func slideIn(_ card: Card, delay: TimeInterval, slow: Bool) {
         card.shown = true
+        card.model.shown = true
         windowOrder = []
         let f = card.targetFrame
         let reduce = Anim.reduceMotion
@@ -699,6 +705,7 @@ final class CardStack {
     private func slideOut(_ card: Card, delay: TimeInterval) {
         guard card.shown else { return }
         card.shown = false
+        card.model.shown = false
         card.setHover(false, close: false)
         let go = {
             guard !card.shown else { return }
@@ -716,10 +723,12 @@ final class CardStack {
     private func animateOut(_ card: Card) {
         card.teardown()
         guard card.shown else {
+            card.model.shown = false
             card.panel.orderOut(nil)
             return
         }
         card.shown = false
+        card.model.shown = false
         leaving.append(card)
         let reduce = Anim.reduceMotion
         let end = reduce ? card.panel.frame : card.panel.frame.offsetBy(dx: 40, dy: 0)

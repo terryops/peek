@@ -34,11 +34,59 @@ final class SSHConnection {
         // suffix before binding, and sockaddr_un.sun_path is only 104 bytes.
         privateDirectory = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent("peek-ssh-" + UUID().uuidString)
     }
+    static func normalize(address: String) -> String {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.hasPrefix("ssh://"), !trimmed.contains("["), !trimmed.contains("]"),
+           trimmed.filter({ $0 == ":" }).count == 1,
+           let colon = trimmed.firstIndex(of: ":") {
+            let hostPart = String(trimmed[..<colon])
+            let portPart = String(trimmed[trimmed.index(after: colon)...])
+            if !hostPart.isEmpty, !hostPart.hasSuffix("@"), !hostPart.hasPrefix("-"),
+               let port = Int(portPart), (1...65535).contains(port), String(port) == portPart {
+                return "ssh://" + trimmed
+            }
+        }
+        return trimmed
+    }
+
     static func validate(address: String) throws {
+        let invalidMsg = L10n.tr("请输入 SSH 主机名或 user@host", "Enter an SSH host alias or user@host")
+        let portMsg = L10n.tr("自定义端口请使用 ssh://user@host:端口（1–65535）或在 ~/.ssh/config 中配置",
+                              "Use ssh://user@host:port (1–65535) or ~/.ssh/config for custom ports")
+        guard !address.isEmpty, address.utf8.count <= 255, !address.hasPrefix("-") else {
+            throw RemoteError.invalid(invalidMsg)
+        }
+        if address.hasPrefix("ssh://") {
+            let body = String(address.dropFirst(6))
+            let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-@:")
+            guard !body.isEmpty, !body.hasPrefix("-"),
+                  body.unicodeScalars.allSatisfy(allowed.contains),
+                  body.filter({ $0 == "@" }).count <= 1,
+                  !body.hasPrefix("@"), !body.hasSuffix("@") else {
+                throw RemoteError.invalid(invalidMsg)
+            }
+            let hostPort = body.split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false).last.map(String.init) ?? ""
+            guard !hostPort.isEmpty, hostPort.filter({ $0 == ":" }).count <= 1 else {
+                throw RemoteError.invalid(portMsg)
+            }
+            if let colon = hostPort.firstIndex(of: ":") {
+                let h = hostPort[..<colon]
+                let p = String(hostPort[hostPort.index(after: colon)...])
+                guard !h.isEmpty, let port = Int(p), (1...65535).contains(port), String(port) == p else {
+                    throw RemoteError.invalid(portMsg)
+                }
+            }
+            return
+        }
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-@[]:%")
-        guard !address.isEmpty, address.utf8.count <= 255, !address.hasPrefix("-"),
-              address.unicodeScalars.allSatisfy(allowed.contains), address.filter({ $0 == "@" }).count <= 1,
-              !address.hasSuffix("@"), !address.hasPrefix("@") else { throw RemoteError.invalid("请输入 SSH 主机名或 user@host") }
+        guard address.unicodeScalars.allSatisfy(allowed.contains),
+              address.filter({ $0 == "@" }).count <= 1,
+              !address.hasSuffix("@"), !address.hasPrefix("@") else {
+            throw RemoteError.invalid(invalidMsg)
+        }
+        if !address.contains("["), !address.contains("]"), address.filter({ $0 == ":" }).count == 1 {
+            throw RemoteError.invalid(portMsg)
+        }
     }
     static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     private var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
@@ -98,7 +146,7 @@ final class SSHConnection {
             self.lock.lock(); self.stderr.append(bytes); self.stderr = Data(self.stderr.suffix(4096)); self.lock.unlock()
         }
         lock.lock()
-        guard !cancelled else { lock.unlock(); throw RemoteError.invalid("已取消") }
+        guard !cancelled else { lock.unlock(); throw RemoteError.invalid(L10n.tr("已取消", "Cancelled")) }
         do { try p.run() } catch { lock.unlock(); errors.fileHandleForReading.readabilityHandler = nil; throw error }
         children.append(p); handles += [output.fileHandleForReading, stdin.fileHandleForWriting]
         lock.unlock()
@@ -126,7 +174,9 @@ final class SSHConnection {
             let (p, out, _) = try launch(command, input: input)
             var bytes = Data()
             while let chunk = try out.fileHandleForReading.read(upToCount: 64 * 1024), !chunk.isEmpty {
-                guard bytes.count + chunk.count <= RemoteProtocol.maxHeader else { throw RemoteError.invalid("SSH 输出过大") }
+                guard bytes.count + chunk.count <= RemoteProtocol.maxHeader else {
+                    throw RemoteError.invalid(L10n.tr("SSH 输出过大", "SSH output too large"))
+                }
                 bytes.append(chunk)
             }
             p.waitUntilExit()
@@ -136,7 +186,7 @@ final class SSHConnection {
     }
     private func errorText() -> String {
         lock.lock(); defer { lock.unlock() }
-        return String(data: stderr, encoding: .utf8)?.nonEmpty ?? "SSH 连接已中断"
+        return String(data: stderr, encoding: .utf8)?.nonEmpty ?? L10n.tr("SSH 连接已中断", "SSH connection closed")
     }
     private func run() {
         var ready = false, madeDirectory = false
@@ -157,34 +207,59 @@ final class SSHConnection {
             madeDirectory = true
             lock.lock(); directoryCreated = true; lock.unlock()
             onState?(.connecting)
-            let probe = String(data: try command("uname -s; uname -m"), encoding: .utf8)?.split(whereSeparator: \.isNewline).map(String.init) ?? []
-            guard probe.count == 2 else { throw RemoteError.invalid("无法识别远程系统") }
+            let probeCmd = "uname -s; uname -m; h=\"$HOME/.local/share/peek/bin/peek-remote\"; if [ -x \"$h\" ]; then (shasum -a 256 \"$h\" 2>/dev/null || sha256sum \"$h\" 2>/dev/null) | cut -d ' ' -f 1; \"$h\" install 2>/dev/null || true; fi"
+            let probe = String(data: try command(probeCmd), encoding: .utf8)?.split(whereSeparator: \.isNewline).map(String.init) ?? []
+            guard probe.count >= 2 else {
+                throw RemoteError.invalid(L10n.tr("无法识别远程系统", "Cannot detect remote OS"))
+            }
             let os: String, arch: String
-            switch probe[0] { case "Darwin": os = "darwin"; case "Linux": os = "linux"; default: throw RemoteError.invalid("不支持的远程系统") }
-            switch probe[1] { case "arm64", "aarch64": arch = "arm64"; case "x86_64", "amd64": arch = "amd64"; default: throw RemoteError.invalid("不支持的远程架构") }
-            onState?(.installing)
+            switch probe[0] {
+            case "Darwin": os = "darwin"
+            case "Linux": os = "linux"
+            default: throw RemoteError.invalid(L10n.tr("不支持的远程系统", "Unsupported remote OS"))
+            }
+            switch probe[1] {
+            case "arm64", "aarch64": arch = "arm64"
+            case "x86_64", "amd64": arch = "amd64"
+            default: throw RemoteError.invalid(L10n.tr("不支持的远程架构", "Unsupported remote architecture"))
+            }
             let binary = try Data(contentsOf: resourceDirectory.appendingPathComponent("remote/peek-\(os)-\(arch)"))
             let digest = SHA256.hash(data: binary).map { String(format: "%02x", $0) }.joined()
-            let hashCommand = os == "darwin" ? "shasum -a 256" : "sha256sum"
-            let install = "umask 077; p=$(mktemp \"${TMPDIR:-/tmp}/peek-remote-v1.XXXXXXXX\") || exit 1; trap 'rm -f \"$p\" \"$p.ready\"' EXIT HUP INT TERM; cat > \"$p\" && test \"$(wc -c < \"$p\")\" -eq \(binary.count) && test \"$(\(hashCommand) \"$p\" | cut -d ' ' -f 1)\" = \(Self.quote(digest)) && chmod 700 \"$p\" && mv \"$p\" \"$p.ready\" && \"$p.ready\" install"
-            let result = try command(install, input: binary)
             struct Installed: Decodable { var command: String }
-            let installed = try JSONDecoder().decode(Installed.self, from: result).command
-            guard !installed.isEmpty, installed.utf8.count <= 4096, !installed.contains("\u{0}") else { throw RemoteError.invalid("无效远程命令") }
+            let installed: String
+            if probe.count >= 4, probe[2] == digest,
+               let reused = try? JSONDecoder().decode(Installed.self, from: Data(probe[3].utf8)).command,
+               !reused.isEmpty, reused.utf8.count <= 4096, !reused.contains("\u{0}") {
+                installed = reused
+            } else {
+                onState?(.installing)
+                let hashCommand = os == "darwin" ? "shasum -a 256" : "sha256sum"
+                let install = "umask 077; p=$(mktemp \"${TMPDIR:-/tmp}/peek-remote-v1.XXXXXXXX\") || exit 1; trap 'rm -f \"$p\" \"$p.ready\"' EXIT HUP INT TERM; cat > \"$p\" && test \"$(wc -c < \"$p\")\" -eq \(binary.count) && test \"$(\(hashCommand) \"$p\" | cut -d ' ' -f 1)\" = \(Self.quote(digest)) && chmod 700 \"$p\" && mv \"$p\" \"$p.ready\" && \"$p.ready\" install"
+                let result = try command(install, input: binary)
+                installed = try JSONDecoder().decode(Installed.self, from: result).command
+            }
+            guard !installed.isEmpty, installed.utf8.count <= 4096, !installed.contains("\u{0}") else {
+                throw RemoteError.invalid(L10n.tr("无效远程命令", "Invalid remote command"))
+            }
             // The install response is a shell-ready command, executed only on the
             // same authenticated remote host. It is never a local executable URL.
             let bridge = "exec \"$HOME/.local/share/peek/bin/peek-remote\" bridge --target \(Self.quote(targetId.uuidString)) --name \(Self.quote(Host.current().localizedName ?? "Mac")) --command \(Self.quote(installed))"
             let (_, output, input) = try launch(bridge)
             let read: (Int) throws -> Data = { try output.fileHandleForReading.read(upToCount: $0) ?? Data() }
             let initial = try withDeadline { try RemoteProtocol.readFrame(read) }
-            guard initial.kind == "ready", initial.targetId?.lowercased() == targetId.uuidString.lowercased(), let sender = initial.command, !sender.isEmpty, sender.utf8.count <= 4096 else { throw RemoteError.invalid("无效连接确认") }
+            guard initial.kind == "ready", initial.targetId?.lowercased() == targetId.uuidString.lowercased(), let sender = initial.command, !sender.isEmpty, sender.utf8.count <= 4096 else {
+                throw RemoteError.invalid(L10n.tr("无效连接确认", "Invalid bridge handshake"))
+            }
             guard !isCancelled else { return }
             ready = true; onReady?(sender)
+            let displayHost = host.address.hasPrefix("ssh://") ? host.label : host.address
             while !isCancelled {
                 // Idle connections may wait indefinitely. Once the first header
                 // byte arrives the complete frame must arrive within the deadline.
                 var prefix = try read(1)
-                guard !prefix.isEmpty else { throw RemoteError.invalid("SSH 连接已中断") }
+                guard !prefix.isEmpty else {
+                    throw RemoteError.invalid(L10n.tr("SSH 连接已中断", "SSH connection closed"))
+                }
                 let message = try withDeadline {
                     try RemoteProtocol.readFrame { count in
                         if !prefix.isEmpty {
@@ -193,9 +268,11 @@ final class SSHConnection {
                         return try read(count)
                     }
                 }
-                guard message.kind == "push" else { throw RemoteError.invalid("无效推送消息") }
+                guard message.kind == "push" else {
+                    throw RemoteError.invalid(L10n.tr("无效推送消息", "Invalid push frame"))
+                }
                 let id: String
-                do { id = try withDeadline { try importer.receive(message, host: host.address, cancellation: publicationCancellation, read: read) } }
+                do { id = try withDeadline { try importer.receive(message, host: displayHost, cancellation: publicationCancellation, read: read) } }
                 catch {
                     if !isCancelled {
                         let failure = RemoteMessage(kind: "ack", requestId: message.requestId, ok: false, error: String(error.localizedDescription.prefix(1024)))
@@ -209,7 +286,7 @@ final class SSHConnection {
                 try input.fileHandleForWriting.write(contentsOf: RemoteProtocol.frame(RemoteMessage(kind: "ack", requestId: message.requestId, ok: true, cardId: id)))
             }
         } catch {
-            if didTimeout { onEnd?("SSH 连接超时", ready) }
+            if didTimeout { onEnd?(L10n.tr("SSH 连接超时", "SSH connection timed out"), ready) }
             else if !isCancelled { onEnd?(error.localizedDescription, ready) }
         }
     }

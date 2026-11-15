@@ -4,22 +4,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 APP="$ROOT/build/Peek.app"
-VERSION="${PEEK_VERSION:-1.0}"
+VERSION="${PEEK_VERSION:-1.1.0}"
 
 echo "==> 编译"
 if [[ "${PEEK_UNIVERSAL:-0}" == 1 ]]; then
     mkdir -p "$ROOT/build"
     for ARCH in arm64 x86_64; do
-        swift build -c release --triple "$ARCH-apple-macosx26.0"
+        swift build -c release --triple "$ARCH-apple-macosx14.0"
         # Xcode's SwiftPM backend may reuse one Products/Release path for both
         # triples, so retain each slice before building the next architecture.
-        cp "$(swift build -c release --triple "$ARCH-apple-macosx26.0" --show-bin-path)/Peek" "$ROOT/build/Peek-$ARCH"
+        cp "$(swift build -c release --triple "$ARCH-apple-macosx14.0" --show-bin-path)/Peek" "$ROOT/build/Peek-$ARCH"
     done
     lipo -create "$ROOT/build/Peek-arm64" "$ROOT/build/Peek-x86_64" -output "$ROOT/build/Peek-universal"
     BIN="$ROOT/build/Peek-universal"
 else
-    swift build -c release
-    BIN="$(swift build -c release --show-bin-path)/Peek"
+    swift build -c release --triple "$(uname -m)-apple-macosx14.0"
+    BIN="$(swift build -c release --triple "$(uname -m)-apple-macosx14.0" --show-bin-path)/Peek"
 fi
 "$ROOT/Scripts/build-remote.sh"
 
@@ -39,7 +39,11 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Peek"
 cp -R Resources/shim Resources/hooks Resources/web Resources/remote Resources/ssh-askpass "$APP/Contents/Resources/"
 chmod 755 "$APP/Contents/Resources/ssh-askpass" "$APP/Contents/Resources/remote/"*
-[[ -f build/AppIcon.icns ]] && cp build/AppIcon.icns "$APP/Contents/Resources/"
+if [[ -f build/AppIcon.icns ]]; then
+    cp build/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+elif [[ -f Resources/AppIcon.icns ]]; then
+    cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+fi
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -53,7 +57,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$(date +%Y%m%d%H%M)</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
-    <key>LSMinimumSystemVersion</key><string>26.0</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
 </dict>

@@ -23,6 +23,7 @@ enum WebDoc {
     static func pageURL(for url: URL) -> URL {
         guard isMarkdown(url) else { return url }
         let out = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).peek.html")
+        if FileManager.default.fileExists(atPath: out.path) { return out }
         let text = (try? String(contentsOf: url, encoding: .utf8)) ?? (try? String(contentsOf: url, encoding: .isoLatin1)) ?? ""
         try? renderMarkdown(text, title: url.deletingPathExtension().lastPathComponent).write(to: out, atomically: true, encoding: .utf8)
         return out
@@ -178,7 +179,7 @@ final class WebSnapshot: NSObject, WKNavigationDelegate {
         window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -30000, y: -30000), size: size),
                           styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .aqua)
+        window.appearance = NSAppearance(named: .darkAqua)
         web = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: WKWebViewConfiguration())
         self.done = done
         super.init()

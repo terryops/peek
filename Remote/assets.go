@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -52,7 +53,52 @@ func newUUID() (string, error) {
 var htmlRefs = regexp.MustCompile(`(?i)(?:src|href|poster)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
 var srcsetRefs = regexp.MustCompile(`(?i)srcset\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 var cssRefs = regexp.MustCompile(`(?i)url\(\s*["']?([^\s"')]+)["']?\s*\)|@import\s+["']([^"']+)["']`)
-var mdRefs = regexp.MustCompile(`!?\[[^\]]*\]\(\s*<?([^\s)>]+)>?(?:\s+[^)]*)?\)|(?m)^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?`)
+var mdRefs = regexp.MustCompile(`!?\[[^\]]*\]\(\s*(?:<([^>\r\n]+)>|([^\s)>]+))(?:\s+[^)]*)?\)|(?m)^\s{0,3}\[[^\]]+\]:\s*(?:<([^>\r\n]+)>|([^\s>]+))`)
+
+func detectProject() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	cwd = filepath.Clean(cwd)
+	home, _ := os.UserHomeDir()
+	home = filepath.Clean(home)
+	for dir := cwd; dir != "/" && dir != "." && dir != home; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return filepath.Base(dir)
+		}
+		if filepath.Dir(dir) == dir {
+			break
+		}
+	}
+	if cwd == "/" || cwd == "." || cwd == home {
+		return ""
+	}
+	return filepath.Base(cwd)
+}
+
+func detectClaudeConversation() string {
+	pid := strings.TrimSpace(os.Getenv("CLAUDE_PID"))
+	if pid == "" || strings.ContainsAny(pid, "/\\\x00") {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".claude/sessions", pid+".json"))
+	if err != nil || len(data) > 65536 {
+		return ""
+	}
+	var session struct {
+		Name       string `json:"name"`
+		NameSource string `json:"nameSource"`
+	}
+	if json.Unmarshal(data, &session) != nil || session.NameSource == "derived" {
+		return ""
+	}
+	return strings.TrimSpace(session.Name)
+}
 
 func references(data []byte) []string {
 	var refs []string
@@ -92,9 +138,17 @@ func collect(inputs []string, title, conversation, source string) (Message, []lo
 	if err != nil {
 		return Message{}, nil, err
 	}
+	if conversation == "" {
+		conversation = detectClaudeConversation()
+	}
 	m := Message{Version: 1, Kind: "push", RequestID: id, Title: title, Conversation: conversation, Source: source}
-	if s, b := os.Getenv("REX_SESSION"), os.Getenv("REX_BLOCK"); s != "" || b != "" {
-		m.Origin = &Origin{RexSession: s, RexBlock: b}
+	s, b := os.Getenv("REX_SESSION"), os.Getenv("REX_BLOCK")
+	proj := ""
+	if source == "" {
+		proj = detectProject()
+	}
+	if s != "" || b != "" || proj != "" {
+		m.Origin = &Origin{RexSession: s, RexBlock: b, Project: proj}
 	}
 	var locals []localFile
 	var total int64

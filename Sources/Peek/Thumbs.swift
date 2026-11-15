@@ -6,23 +6,45 @@ import QuickLookThumbnailing
 /// PDFs, SVGs and the rest fall back to Quick Look.
 enum Thumbs {
     private static let queue = DispatchQueue(label: "peek.thumbs", qos: .userInitiated, attributes: .concurrent)
-    private static var cache: [String: [NSImage]] = [:]
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var cache: [String: [NSImage]] = [:]
 
-    static func cached(_ item: PeekItem) -> [NSImage]? { cache[item.id] }
+    static func cached(_ item: PeekItem) -> [NSImage]? {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        return cache[item.id]
+    }
 
-    static func forget(_ id: String) { cache[id] = nil }
-    static var cacheKeys: [String] { Array(cache.keys) }
+    static func forget(_ id: String) {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        cache[id] = nil
+    }
 
-    /// Loads up to three thumbnails for an item and calls back on the main queue.
-    static func load(_ item: PeekItem, maxPixel: CGFloat = 720, done: @escaping ([NSImage]) -> Void) {
-        if let hit = cache[item.id] { done(hit); return }
-        let urls = Array(item.urls.prefix(3))
+    static var cacheKeys: [String] {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        return Array(cache.keys)
+    }
+
+    /// Loads up to `limit` thumbnails for an item and calls back on the main queue.
+    static func load(_ item: PeekItem, limit: Int = 3, maxPixel: CGFloat = 720, done: @escaping ([NSImage]) -> Void) {
+        let wanted = min(max(0, limit), item.urls.count)
+        if let hit = cached(item), hit.count >= wanted {
+            done(hit)
+            return
+        }
+        let urls = Array(item.urls.prefix(wanted))
+        let existing = cached(item) ?? []
         let id = item.id
         queue.async {
             let group = DispatchGroup()
             var images = [NSImage?](repeating: nil, count: urls.count)
             let lock = NSLock()
             for (i, url) in urls.enumerated() {
+                if i < existing.count {
+                    lock.lock()
+                    images[i] = existing[i]
+                    lock.unlock()
+                    continue
+                }
                 if WebDoc.isWeb(url) {
                     group.enter()
                     DispatchQueue.main.async {
@@ -56,8 +78,13 @@ enum Thumbs {
             let result = images.enumerated().map { i, img in img ?? NSWorkspace.shared.icon(forFile: urls[i].path) }
             lock.unlock()
             DispatchQueue.main.async {
-                cache[id] = result
-                done(result)
+                cacheLock.lock()
+                if (cache[id]?.count ?? 0) <= result.count {
+                    cache[id] = result
+                }
+                let finalResult = cache[id] ?? result
+                cacheLock.unlock()
+                done(finalResult)
             }
         }
     }

@@ -7,11 +7,19 @@ import Darwin
 struct RemoteSettingsTests {
     @Test func emptyMenuKeepsRemoteManagementAccessible() {
         _ = NSApplication.shared
+        defer { L10n.override = nil }
+        L10n.override = .zh
         let menu = StatusMenu()
         menu.update([])
-        let snapshot = menu.snapshot()
-        #expect(snapshot["visible"] as? Bool == true)
-        #expect((snapshot["rows"] as? [String])?.contains(where: { $0.hasPrefix("远程机器…") }) == true)
+        let zhRows = (menu.snapshot()["rows"] as? [String]) ?? []
+        #expect(menu.snapshot()["visible"] as? Bool == true)
+        #expect(zhRows.contains(where: { $0.hasPrefix("远程机器…") }))
+        #expect(zhRows.contains(where: { $0.hasPrefix("登录时打开") }))
+
+        L10n.override = .en
+        let enRows = (menu.snapshot()["rows"] as? [String]) ?? []
+        #expect(enRows.contains(where: { $0.hasPrefix("Remote Machines…") }))
+        #expect(enRows.contains(where: { $0.hasPrefix("Launch at Login") }))
     }
 
     @Test func remoteSettingsCommandIsAcceptedWithoutPublishingCard() {
@@ -169,7 +177,42 @@ struct RemoteSettingsTests {
         editor.insertText("", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
         window.makeFirstResponder(nil)
         #expect(manager.hosts.isEmpty)
-        #expect(fields.filter { $0 != address }.allSatisfy { $0.stringValue != "请输入 SSH 主机名或 user@host" })
+        #expect(fields.filter { $0 != address }.allSatisfy {
+            $0.stringValue != "请输入 SSH 主机名或 user@host" && $0.stringValue != "Enter an SSH host or user@host"
+        })
+    }
+
+    @Test func duplicateHostNormalizesPortAndClearsInputWithoutDuplicatingRow() throws {
+        _ = NSApplication.shared
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let script = root.appendingPathComponent("ssh")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: script)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        let manager = RemoteConnections(storageDirectory: root.appendingPathComponent("config"), sshExecutable: script)
+        defer { manager.stop() }
+        let first = try manager.add(address: "dev@example.com:2222", label: "")
+        let second = try manager.add(address: "ssh://dev@example.com:2222", label: "")
+        #expect(first == second)
+        #expect(manager.hosts.count == 1)
+        #expect(manager.hosts.first?.address == "ssh://dev@example.com:2222")
+        #expect(manager.hosts.first?.label == "dev@example.com:2222")
+
+        let settings = RemoteSettings(connections: manager)
+        settings.present()
+        let window = try #require(settings.window)
+        defer { window.orderOut(nil) }
+        func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
+        let buttons = descendants(try #require(window.contentView)).compactMap { $0 as? NSButton }
+        let fields = descendants(try #require(window.contentView)).compactMap { $0 as? NSTextField }
+        let input = try #require(fields.first { $0.placeholderString != nil })
+        input.stringValue = "ops@buildbox:2200"
+        let addBtn = try #require(buttons.first { $0.title == "连接" || $0.title == "Connect" })
+        addBtn.performClick(nil)
+        #expect(input.stringValue.isEmpty)
+        #expect(manager.hosts.count == 2)
     }
 
 }

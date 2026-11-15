@@ -44,8 +44,10 @@ final class App: NSObject, NSApplicationDelegate {
         settingsNotification()
         dnc.addObserver(self, selector: #selector(changedNotification), name: Paths.changed, object: nil,
                         suspensionBehavior: .deliverImmediately)
-        dnc.addObserver(self, selector: #selector(debugNotification(_:)), name: Paths.debug, object: nil,
-                        suspensionBehavior: .deliverImmediately)
+        if ProcessInfo.processInfo.environment["PEEK_DEBUG"] == "1" {
+            dnc.addObserver(self, selector: #selector(debugNotification(_:)), name: Paths.debug, object: nil,
+                            suspensionBehavior: .deliverImmediately)
+        }
         dnc.addObserver(self, selector: #selector(quitNotification), name: Paths.quit, object: nil,
                         suspensionBehavior: .deliverImmediately)
 

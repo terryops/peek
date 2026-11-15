@@ -67,12 +67,14 @@ struct RemoteTransferTests {
         #expect(origin.canJump == false)
     }
     @Test func rejectsSSHOptionAndShellInjection() throws {
-        for address in ["-oProxyCommand=evil", "a b", "host;touch", "a\nwhoami", "$(evil)", "", "user@"] {
+        for address in ["-oProxyCommand=evil", "a b", "host;touch", "a\nwhoami", "$(evil)", "", "user@", "user@example.com:bad", "user@example.com:70000", "ssh://user@[::1]:2222"] {
             #expect(throws: (any Error).self) { try SSHConnection.validate(address: address) }
         }
-        for address in ["officemac", "user@example.com", "user@192.168.1.2", "user@[::1]"] {
-            try SSHConnection.validate(address: address)
+        for address in ["officemac", "user@example.com", "user@192.168.1.2", "user@[::1]", "ssh://user@example.com:2222", "user@example.com:2222"] {
+            try SSHConnection.validate(address: SSHConnection.normalize(address: address))
         }
+        #expect(SSHConnection.normalize(address: "user@example.com:2222") == "ssh://user@example.com:2222")
+        #expect(SSHConnection.normalize(address: "user@[::1]") == "user@[::1]")
     }
     @Test @MainActor func cancellationDoesNotPublishStaleState() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -158,7 +160,7 @@ struct RemoteTransferTests {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(!((try? FileManager.default.subpathsOfDirectory(atPath: downloads.path)) ?? []).contains(where: { $0.contains(".partial") }))
-        #expect(!FileManager.default.fileExists(atPath: downloads.appendingPathComponent("fixture/" + message.requestId!).path))
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: downloads.appendingPathComponent("fixture").path)) ?? []).isEmpty)
         #expect(Set(Store.loadAll().map(\.id)) == before)
     }
 
@@ -253,8 +255,7 @@ struct RemoteTransferTests {
         #expect(result.error != nil)
         #expect(result.id == nil)
         #expect(created.isEmpty)
-        let destination = root.appendingPathComponent("server/" + message.requestId!)
-        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("server").path)) ?? []).isEmpty)
         #expect(!((try? FileManager.default.subpathsOfDirectory(atPath: root.path)) ?? []).contains(where: { $0.contains(".partial") }))
     }
 
@@ -308,8 +309,97 @@ struct RemoteTransferTests {
         }
         #expect(throws: (any Error).self) { try importer.receive(message, host: "server", cancellation: token, read: reader(hello)) }
         #expect(Set(Store.loadAll().map(\.id)) == before)
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("server/" + message.requestId!).path))
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("server").path)) ?? []).isEmpty)
         #expect(!((try? FileManager.default.subpathsOfDirectory(atPath: root.path)) ?? []).contains(where: { $0.contains(".partial") }))
+    }
+
+    @Test func remoteSourceFormattingAndReadableDownloadFolderWithReplayProtection() throws {
+        #expect(RemoteImporter.formatSource(explicit: nil, project: "voice-workshop", host: "ssh://dev@ul-zero:2222") == "dev@ul-zero:2222 · voice-workshop")
+        #expect(RemoteImporter.formatSource(explicit: nil, project: nil, host: "officemac") == "officemac")
+        #expect(RemoteImporter.formatSource(explicit: "Custom", project: "voice-workshop", host: "officemac") == "Custom")
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var msg = RemoteMessage(kind: "push", requestId: UUID().uuidString, title: "Latency Audit", source: nil,
+                                origin: RemoteOrigin(project: "peek"), files: [file()])
+        let importer = RemoteImporter(downloadRoot: root)
+        let id = try importer.receive(msg, host: "dev@server", read: reader(hello))
+        defer { Store.remove(id) }
+        let item = try #require(Store.loadAll().first { $0.id == id })
+        #expect(item.source == "dev@server · peek")
+        let hostDir = root.appendingPathComponent("dev_server")
+        let entries = try FileManager.default.contentsOfDirectory(atPath: hostDir.path)
+        #expect(entries.count == 1)
+        #expect(entries[0].contains("_Latency-Audit_"))
+        // Replay with identical requestId must be rejected even if title changes
+        msg.title = "Replay Attempt"
+        #expect(throws: (any Error).self) { try importer.receive(msg, host: "dev@server", read: reader(hello)) }
+    }
+
+    @Test func fastReconnectSkipsUploadingUnchangedRemoteBinary() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: root.appendingPathComponent("remote"), withIntermediateDirectories: true)
+        let binary = Data("cached-remote-helper".utf8)
+        try binary.write(to: root.appendingPathComponent("remote/peek-darwin-arm64"))
+        let sha = SHA256.hash(data: binary).map { String(format: "%02x", $0) }.joined()
+        let target = UUID()
+        try RemoteProtocol.frame(RemoteMessage(kind: "ready", targetId: target.uuidString, command: "'/remote/peek'"))
+            .write(to: root.appendingPathComponent("ssh.wire"))
+        let script = root.appendingPathComponent("ssh")
+        let shell = """
+        #!/bin/sh
+        case "$*" in
+        *'uname -s'*) printf 'Darwin\\narm64\\n\(sha)\\n{"command":"/remote/peek"}\\n';;
+        *'mktemp'*) echo unexpected-upload > "$0.uploaded"; exit 99;;
+        *' bridge '*) cat "$0.wire"; exec sleep 30;;
+        *) exit 0;;
+        esac
+        """
+        try Data(shell.utf8).write(to: script)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        var sawInstalling = false
+        let connected = DispatchSemaphore(value: 0)
+        let conn = SSHConnection(host: RemoteHost(id: UUID(), address: "fixture", label: "Fixture", enabled: true),
+                                 targetId: target, resourceDirectory: root, sshExecutable: script)
+        conn.onState = { state in
+            if state == .installing { sawInstalling = true }
+            if state == .connected { connected.signal() }
+        }
+        conn.start()
+        defer { conn.cancel() }
+        let reached = await withCheckedContinuation { cont in
+            DispatchQueue.global().async { cont.resume(returning: connected.wait(timeout: .now() + 2) == .success) }
+        }
+        #expect(reached)
+        #expect(!sawInstalling)
+        #expect(!fm.fileExists(atPath: script.path + ".uploaded"))
+    }
+
+    @Test func localMultiDocumentPublishIsolatesAssetsAndRejectsSymlinkEscape() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let dirA = root.appendingPathComponent("a")
+        let dirB = root.appendingPathComponent("b")
+        try fm.createDirectory(at: dirA.appendingPathComponent("assets"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: dirB.appendingPathComponent("assets"), withIntermediateDirectories: true)
+        let secret = root.appendingPathComponent("secret.txt")
+        try Data("top-secret".utf8).write(to: secret)
+        try Data("alpha".utf8).write(to: dirA.appendingPathComponent("assets/data.txt"))
+        try Data("bravo-longer".utf8).write(to: dirB.appendingPathComponent("assets/data.txt"))
+        try fm.createSymbolicLink(at: dirB.appendingPathComponent("assets/escape.txt"), withDestinationURL: secret)
+        let pageA = dirA.appendingPathComponent("report.html")
+        let pageB = dirB.appendingPathComponent("report.html")
+        try Data("<img src=\"assets/data.txt\">".utf8).write(to: pageA)
+        try Data("<img src=\"assets/data.txt\"><img src=\"assets/escape.txt\">".utf8).write(to: pageB)
+        let item = try CLI.publish([pageA.path, pageB.path], title: "Pair", source: "local")
+        defer { Store.remove(item.id) }
+        #expect(item.urls.count == 2)
+        #expect(try Data(contentsOf: item.urls[0].deletingLastPathComponent().appendingPathComponent("assets/data.txt")) == Data("alpha".utf8))
+        #expect(try Data(contentsOf: item.urls[1].deletingLastPathComponent().appendingPathComponent("assets/data.txt")) == Data("bravo-longer".utf8))
+        #expect(!fm.fileExists(atPath: item.urls[1].deletingLastPathComponent().appendingPathComponent("assets/escape.txt").path))
     }
 
 }

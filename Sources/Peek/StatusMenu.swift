@@ -7,6 +7,12 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private var status: NSStatusItem?
     private var items: [PeekItem] = []
     private let maxRows = 30
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm"
+        return f
+    }()
 
     func update(_ items: [PeekItem]) {
         self.items = items
@@ -16,7 +22,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         guard let button = s.button else { return }
         button.title = unread > 0 ? "\(unread)" : ""
         button.imagePosition = unread > 0 ? .imageLeading : .imageOnly
-        button.setAccessibilityLabel(unread > 0 ? "Peek，\(unread) 个未查看" : "Peek")
+        button.setAccessibilityLabel(
+            unread > 0
+                ? L10n.tr("Peek，\(unread) 个未查看", "Peek, \(unread) unread")
+                : "Peek"
+        )
     }
 
     private func make() -> NSStatusItem {
@@ -38,20 +48,25 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let time = DateFormatter()
-        time.dateFormat = "HH:mm"
         let placeholder = NSImage(systemSymbolName: "photo", accessibilityDescription: nil)
+        let revealLabel = L10n.tr("在访达中显示", "Reveal in Finder")
 
         for item in items.prefix(maxRows) {
-            var sub = "\(item.conversationTitle) · \(time.string(from: item.created))"
-            if item.files.count > 1 { sub += " · \(item.files.count) 个文件" }
+            var sub = "\(item.conversationTitle) · \(Self.timeFormatter.string(from: item.created))"
+            if item.files.count > 1 {
+                sub += " · " + L10n.tr("\(item.files.count) 个文件", "\(item.files.count) files")
+            }
             let icon = Thumbs.cached(item)?.first.map { Thumbs.menuIcon($0) } ?? placeholder
             if Thumbs.cached(item) == nil { Thumbs.load(item) { _ in } }
 
             let row = NSMenuItem(title: item.displayTitle, action: #selector(openRow(_:)), keyEquivalent: "")
             row.target = self
             row.representedObject = item.id
-            row.subtitle = sub
+            if #available(macOS 14.4, *) {
+                row.subtitle = sub
+            } else {
+                row.toolTip = sub
+            }
             row.image = icon
             if !item.seen {
                 row.attributedTitle = NSAttributedString(string: item.displayTitle, attributes: [
@@ -64,7 +79,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             let alt = NSMenuItem(title: item.displayTitle, action: #selector(revealRow(_:)), keyEquivalent: "")
             alt.target = self
             alt.representedObject = item.id
-            alt.subtitle = "在访达中显示"
+            if #available(macOS 14.4, *) {
+                alt.subtitle = revealLabel
+            } else {
+                alt.title = "\(item.displayTitle) — \(revealLabel)"
+            }
             alt.image = icon
             alt.isAlternate = true
             alt.keyEquivalentModifierMask = .option
@@ -72,10 +91,20 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
 
         if !items.isEmpty { menu.addItem(.separator()) }
-        let remote = NSMenuItem(title: "远程机器…", action: #selector(remoteSettings), keyEquivalent: "")
+        let remote = NSMenuItem(title: L10n.tr("远程机器…", "Remote Machines…"), action: #selector(remoteSettings), keyEquivalent: "")
         remote.target = self
         menu.addItem(remote)
+        if !SystemIntegration.isCLIInstalledForCurrentBundle {
+            let cli = NSMenuItem(title: L10n.tr("安装 peek 命令", "Install 'peek' Command"), action: #selector(installCLI), keyEquivalent: "")
+            cli.target = self
+            menu.addItem(cli)
+        }
+        let login = NSMenuItem(title: L10n.tr("登录时打开", "Launch at Login"), action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        login.target = self
+        login.state = SystemIntegration.launchAtLoginEnabled ? .on : .off
+        menu.addItem(login)
         menu.addItem(.separator())
+
         let styles = NSMenu()
         for style in CardStyle.allCases {
             let it = NSMenuItem(title: style.label, action: #selector(pickStyle(_:)), keyEquivalent: "")
@@ -85,38 +114,83 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             styles.addItem(it)
         }
         styles.addItem(.separator())
-        let deck = NSMenuItem(title: "叠放", action: #selector(toggleDeck), keyEquivalent: "")
+        let deck = NSMenuItem(title: L10n.tr("叠放", "Deck Stack"), action: #selector(toggleDeck), keyEquivalent: "")
         deck.target = self
         deck.state = Prefs.stacking == .deck ? .on : .off
         styles.addItem(deck)
-        let styleRoot = NSMenuItem(title: "卡片样式", action: nil, keyEquivalent: "")
+        let styleRoot = NSMenuItem(title: L10n.tr("卡片样式", "Card Style"), action: nil, keyEquivalent: "")
         styleRoot.submenu = styles
         menu.addItem(styleRoot)
-        let newest = NSMenuItem(title: "打开最新一张", action: #selector(openNewest), keyEquivalent: "")
+
+        let newest = NSMenuItem(title: L10n.tr("打开最新一张", "Open Newest Card"), action: #selector(openNewest), keyEquivalent: "")
         newest.target = self
         Hotkeys.shared.decorate(newest, .open)
         menu.addItem(newest)
         if let stack = app?.cards, !stack.cards.isEmpty {
             let tucked = stack.mode == .tucked
-            let toggle = NSMenuItem(title: tucked ? "显示卡片" : "暂时收起卡片", action: #selector(toggleTuck), keyEquivalent: "")
+            let toggleTitle = tucked
+                ? L10n.tr("显示卡片", "Show Cards")
+                : L10n.tr("暂时收起卡片", "Tuck Cards Aside")
+            let toggle = NSMenuItem(title: toggleTitle, action: #selector(toggleTuck), keyEquivalent: "")
             toggle.target = self
             Hotkeys.shared.decorate(toggle, .tuck)
             menu.addItem(toggle)
-            let closeAll = NSMenuItem(title: "全部关闭", action: #selector(closeAll), keyEquivalent: "")
+            let closeAll = NSMenuItem(title: L10n.tr("全部关闭", "Close All"), action: #selector(closeAll), keyEquivalent: "")
             closeAll.target = self
             Hotkeys.shared.decorate(closeAll, .closeAll)
             menu.addItem(closeAll)
         }
         menu.addItem(.separator())
-        let clear = NSMenuItem(title: "全部清空", action: #selector(clearAll), keyEquivalent: "")
+        let clear = NSMenuItem(title: L10n.tr("全部清空", "Clear All"), action: #selector(clearAll), keyEquivalent: "")
         clear.target = self
         menu.addItem(clear)
-        let quit = NSMenuItem(title: "退出 Peek", action: #selector(quit), keyEquivalent: "")
+        let quit = NSMenuItem(title: L10n.tr("退出 Peek", "Quit Peek"), action: #selector(quit), keyEquivalent: "")
         quit.target = self
         menu.addItem(quit)
     }
 
     @MainActor @objc private func remoteSettings() { app?.showRemoteSettings() }
+    @MainActor @objc private func toggleLaunchAtLogin() {
+        let target = !SystemIntegration.launchAtLoginEnabled
+        do {
+            try SystemIntegration.setLaunchAtLogin(target)
+        } catch {
+            presentAlert(
+                title: L10n.tr("无法更改登录项", "Cannot Update Login Item"),
+                message: error.localizedDescription
+            )
+        }
+    }
+    @MainActor @objc private func installCLI() {
+        do {
+            let (link, inPath) = try SystemIntegration.installCLISymlink()
+            if !inPath {
+                presentAlert(
+                    title: L10n.tr("已安装到 ~/bin/peek", "Installed to ~/bin/peek"),
+                    message: L10n.tr(
+                        "请将 ~/bin 加入 PATH：\nexport PATH=\"$HOME/bin:$PATH\"",
+                        "Add ~/bin to your PATH:\nexport PATH=\"$HOME/bin:$PATH\""
+                    )
+                )
+            } else {
+                _ = link
+            }
+        } catch {
+            presentAlert(
+                title: L10n.tr("安装 peek 命令失败", "Failed to Install 'peek'"),
+                message: error.localizedDescription
+            )
+        }
+    }
+    @MainActor private func presentAlert(title: String, message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = title
+        alert.informativeText = message
+        alert.runModal()
+    }
+
     @objc private func openRow(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? String { app?.open(id, from: nil) }
     }
@@ -136,10 +210,17 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     func snapshot() -> [String: Any] {
         let probe = NSMenu()
         menuNeedsUpdate(probe)
+        let rows: [String] = probe.items.filter { !$0.isSeparatorItem && !$0.isAlternate }.map { item in
+            if #available(macOS 14.4, *) {
+                return "\(item.title) | \(item.subtitle ?? "")"
+            } else {
+                return "\(item.title) | \(item.toolTip ?? "")"
+            }
+        }
         return [
             "visible": status?.isVisible ?? false,
             "title": status?.button?.title ?? "",
-            "rows": probe.items.filter { !$0.isSeparatorItem && !$0.isAlternate }.map { "\($0.title) | \($0.subtitle ?? "")" },
+            "rows": rows,
         ]
     }
 }

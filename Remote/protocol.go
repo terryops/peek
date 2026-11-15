@@ -30,6 +30,7 @@ type File struct {
 type Origin struct {
 	RexSession string `json:"rexSession,omitempty"`
 	RexBlock   string `json:"rexBlock,omitempty"`
+	Project    string `json:"project,omitempty"`
 }
 type Message struct {
 	Version      int     `json:"version"`

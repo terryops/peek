@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  remote:
+    name: Go Remote Helper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache-dependency-path: Remote/go.mod
+      - name: Test & Vet Remote
+        working-directory: Remote
+        run: |
+          go vet ./...
+          go test -race ./...
+      - name: Cross-compile Remote Binaries
+        run: ./Scripts/build-remote.sh
+
+  macos:
+    name: macOS App & Tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache-dependency-path: Remote/go.mod
+      - name: Run Swift Test Suite
+        run: |
+          STORE="$(mktemp -d)"
+          trap 'rm -rf "$STORE"' EXIT
+          PEEK_HOME="$STORE" swift test
+      - name: Build Universal Peek.app & Self-Test
+        run: PEEK_UNIVERSAL=1 ./Scripts/build.sh
