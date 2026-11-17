@@ -38,7 +38,7 @@ ln -sfn "/Applications/Peek.app/Contents/MacOS/Peek" "$HOME/bin/peek"
 凡是需要我查看的截图、UI 前后对比图、图表、PDF 或 Markdown / HTML 报告，统一用 `peek` 推到屏幕右上角浮动卡片：
 
 - 执行 `peek -t "简短标题" <文件…>`（远程 SSH 主机若未将 `~/.local/bin` 加入 `PATH`，执行 `~/.local/bin/peek -t "简短标题" <文件…>`）。
-- 相关的多张图片（如修改前后对比、多方案效果图）放在同一条 `peek` 命令里合推成一张卡，方便并排对比。
+- 相关的多张图片（如修改前后对比、多方案效果图）放在同一条 `peek` 命令里合推成一张卡，通过缩略图切换查看，按 `⌘D` 并排对比。
 - Markdown / HTML 引用的本地图片、CSS、JS 使用同目录下的相对路径，`peek` 会随卡片自动快照打包，后续覆盖同名文件不会影响旧卡片。
 - 不要对预览文件直接执行 `open` 或 `qlmanage -p`（会抢走当前焦点），也不要只丢文件路径而不推卡片。
 ```
@@ -49,7 +49,7 @@ ln -sfn "/Applications/Peek.app/Contents/MacOS/Peek" "$HOME/bin/peek"
 # 推送 Markdown 或 HTML 报告（同目录下引用的本地图表、CSS、JS 会随卡片自动打包）
 peek -t "鉴权耗时排查报告" report.md
 
-# 将修改前后多张截图放在同一条命令里合推，点开即可并排对比
+# 将修改前后多张截图合推，通过缩略图切换，按 ⌘D 并排对比
 peek -t "结账页顶栏对比" before.png after.png
 
 # 多子 Agent 或后台任务并行时，显式指定卡片顶部的来源名称

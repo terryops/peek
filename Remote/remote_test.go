@@ -655,7 +655,7 @@ func TestInstallFallbackSurvivesOptionalLauncherFailure(t *testing.T) {
 				}
 			}
 			output, err := exec.Command("/bin/sh", "-c", command+" --version").CombinedOutput()
-			if err != nil || string(output) != "peek-remote 1.0.0 (protocol 1)\n" {
+			if err != nil || string(output) != "peek-remote "+version+" (protocol 1)\n" {
 				t.Fatalf("fallback execution: %q %v", output, err)
 			}
 		})

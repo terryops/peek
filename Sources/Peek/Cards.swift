@@ -105,7 +105,9 @@ final class CardInteractionView: NSView, NSDraggingSource {
         if downOnClose && card.closeRect.contains(p) {
             card.close(all: option)
         } else if !downOnClose {
-            option ? card.reveal() : card.open()
+            let previewPoint = NSPoint(x: p.x, y: bounds.height - p.y)
+            let selected = card.model.previewFrames.first { $0.value.contains(previewPoint) }?.key
+            option ? card.reveal() : card.open(selectedIndex: selected)
         }
     }
 
@@ -210,10 +212,10 @@ final class Card: NSObject {
 
     // MARK: actions
 
-    func open() {
+    func open(selectedIndex: Int? = nil) {
         // A click on a card tucked behind the front one just fans the deck out.
         if model.shell { stack?.pointerEntered(force: true); return }
-        stack?.app?.open(id, from: panel.frame)
+        stack?.app?.open(id, from: panel.frame, selectedIndex: selectedIndex)
     }
     func reveal() { stack?.app?.reveal(id) }
     func copyFiles() { stack?.app?.copy(id) }

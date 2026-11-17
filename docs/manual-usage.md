@@ -67,7 +67,7 @@ PEEK_TARGET=<target-uuid> peek report.pdf
 - **Styles & layout** — Choose between *Rich* (`大图`), *Compact* (`简洁`), and *Photo* (`照片`) card styles, and toggle **Stacked Deck** vs **Vertical List** from the menu bar.
 - **Tuck away** — Collapse the card stack into a right-edge handle that peeks out on hover.
 - **Lifecycle** — Unread cards stay visible (marked with an accent dot); viewed cards auto-dismiss after 5 minutes of inactivity. Up to 3 cards show at once with extras queued. Snapshots in `~/Library/Caches/Peek/` are cleaned up after 24 hours.
-- **Viewer** — Double-click images to toggle Fit ↔ 1:1 pixels, pinch or `⌘±` to zoom, scroll wheel or two-finger horizontal swipe to cycle files, and `⌘D` for side-by-side image comparison (enabled by default when opening multiple images on an external display). External web links in Markdown/HTML open in your default browser.
+- **Viewer** — Double-click images to toggle Fit ↔ 1:1 pixels, pinch or `⌘±` to zoom, scroll wheel or two-finger horizontal swipe to cycle files, and `⌘D` for side-by-side image comparison. Multiple files open with a Preview-style thumbnail sidebar in wide windows; click a thumbnail or comparison image to view that file. External web links in Markdown/HTML open in your default browser.
 
 ## Keyboard Shortcuts
 
@@ -81,7 +81,8 @@ Global shortcuts use Carbon hotkeys and require no Accessibility permission:
 | `⎋` / `Space` | Viewer | Close viewer (keep card) |
 | `⌘W` / `⌘⌫` | Viewer | Close viewer and dismiss card |
 | `←` `→` / Swipe | Viewer | Previous / next file in card |
-| `↑` `↓` | Viewer | Previous / next card |
+| `↑` `↓` | Viewer | Previous / next file (card for single-file items) |
+| `⌥↑` `⌥↓` | Viewer | Previous / next card |
 | `⌘D` | Viewer | Toggle side-by-side comparison |
 | `⌘0` / `⌘1` / `⌘±` | Viewer | Fit to window / 1:1 pixels / zoom |
 | `⌘C` / `⌘R` / `↩` | Viewer | Copy / reveal in Finder / back to conversation |

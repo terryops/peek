@@ -83,6 +83,8 @@ final class CardModel: ObservableObject {
     @Published var shell = false
     @Published var shown = false
     @Published var depth = 0
+    /// SwiftUI's top-left coordinates, read by the non-activating interaction layer.
+    var previewFrames: [Int: CGRect] = [:]
 
     init(item: PeekItem, thumbs: [NSImage], style: CardStyle) {
         self.item = item
@@ -120,6 +122,7 @@ struct CardView: View {
             .overlay(alignment: .top) {
                 content
                     .frame(width: m.size.width, height: m.size.height)
+                    .coordinateSpace(name: "cardContent")
                     .opacity(m.shell ? 0 : 1)
             }
             .scaleEffect(m.pressed ? 0.975 : 1)
@@ -203,7 +206,7 @@ struct RichCard: View {
                 TimeOrClose(m: m)
             }
             .padding(.horizontal, 5)
-            PreviewPane(images: m.thumbs, count: m.item.files.count)
+            PreviewPane(images: m.thumbs, count: m.item.files.count, reportFrames: { m.previewFrames = $0 })
                 .frame(height: 172)
         }
         .padding(11)
@@ -327,6 +330,7 @@ struct TimeOrClose: View {
 struct PreviewPane: View {
     let images: [NSImage]
     let count: Int
+    var reportFrames: ([Int: CGRect]) -> Void = { _ in }
     private let shape = RoundedRectangle(cornerRadius: 13, style: .continuous)
 
     var body: some View {
@@ -342,7 +346,7 @@ struct PreviewPane: View {
                 Color.black.opacity(0.1)
             }
             HStack(spacing: 8) {
-                ForEach(Array(images.prefix(3).enumerated()), id: \.offset) { _, img in
+                ForEach(Array(images.prefix(3).enumerated()), id: \.offset) { i, img in
                     Image(nsImage: img)
                         .resizable()
                         .interpolation(.high)
@@ -350,6 +354,11 @@ struct PreviewPane: View {
                         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
                         .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(GeometryReader { geo in
+                            Color.clear.preference(key: PreviewFramesKey.self,
+                                                   value: [i: geo.frame(in: .named("cardContent"))])
+                        })
                 }
             }
             .padding(12)
@@ -365,6 +374,14 @@ struct PreviewPane: View {
         }
         .clipShape(shape)
         .overlay(shape.strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+        .onPreferenceChange(PreviewFramesKey.self, perform: reportFrames)
+    }
+}
+
+private struct PreviewFramesKey: PreferenceKey {
+    static var defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 

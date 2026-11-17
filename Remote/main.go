@@ -15,7 +15,7 @@ import (
 	"syscall"
 )
 
-const version = "1.1.0"
+const version = "1.1.1"
 
 type senderOptions struct {
 	title        string

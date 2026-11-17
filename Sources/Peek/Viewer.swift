@@ -22,6 +22,8 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var swipeOffset: CGFloat = 0
     private var swipeOutgoing: NSView?
     private var swipeAnimationGeneration = 0
+    private static let sidebarWidth: CGFloat = 172
+    private static let sidebarBreakpoint: CGFloat = 760
 
     var isOpen: Bool { window?.isVisible ?? false }
     /// Debug only: open without taking the keyboard.
@@ -38,6 +40,8 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             "subtitle": win.subtitle,
             "index": index,
             "compare": compare,
+            "navigation": showStrip ? (strip.sidebar ? "sidebar" : "filmstrip") : "none",
+            "file": item?.files[index].name ?? "",
             "help": help.visible,
             "item": item?.displayTitle ?? "",
             "key": win.isKeyWindow,
@@ -51,14 +55,18 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     // MARK: open / close
 
-    func show(_ item: PeekItem, from origin: NSRect?) {
+    func show(_ item: PeekItem, from origin: NSRect?, selectedIndex: Int? = nil) {
+        guard !item.files.isEmpty else { return }
         let reopenSame = isOpen && self.item?.id == item.id
         self.item = item
         let screen = origin.flatMap { r in NSScreen.screens.first { $0.frame.intersects(r) } } ?? NSScreen.main ?? NSScreen.screens[0]
         if !reopenSame {
             index = 0
-            let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
-            compare = item.files.count > 1 && item.allImages && displayID.map { CGDisplayIsBuiltin($0) == 0 } == true
+            compare = false
+        }
+        if let selectedIndex {
+            index = min(max(0, selectedIndex), item.files.count - 1)
+            compare = false
         }
 
         let win = window ?? makeWindow()
@@ -143,21 +151,15 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         toolbar.allowsUserCustomization = false
         win.toolbar = toolbar
 
-        let container = NSView()
+        let container = ViewerContentView()
+        container.onResize = { [weak self] in self?.layoutContent() }
         container.wantsLayer = true
         container.layer?.masksToBounds = true
         win.contentView = container
 
         let host = NSHostingView(rootView: FilmstripView(m: strip) { [weak self] i in self?.select(i) })
         host.sizingOptions = []
-        host.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(host)
-        NSLayoutConstraint.activate([
-            host.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            host.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            host.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            host.heightAnchor.constraint(equalToConstant: 84),
-        ])
         stripHost = host
 
         let helpView = NSHostingView(rootView: ShortcutSheet(m: help))
@@ -177,13 +179,14 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let vf = screen.visibleFrame
         let scale = screen.backingScaleFactor
         let maxW = vf.width * 0.8, maxH = vf.height * 0.88
-        let chrome: CGFloat = 52 + (showStrip ? 84 : 0)
+        let sidebar = showStrip && maxW >= Self.sidebarBreakpoint
+        let chrome: CGFloat = 52 + (showStrip && !sidebar ? 84 : 0)
         var size = NSSize(width: maxW * 0.75, height: maxH * 0.8)
         if let item, !compare, WebDoc.isWeb(item.urls[index]) || item.urls[index].pathExtension.lowercased() == "pdf" {
             let w: CGFloat = WebDoc.isMarkdown(item.urls[index]) ? 920 : 1240
             size = NSSize(width: w, height: vf.height * 0.86)
         } else if let item, !compare, let px = pixelSize(item.urls[index]) {
-            size = NSSize(width: px.width / scale, height: px.height / scale + chrome)
+            size = NSSize(width: px.width / scale + (sidebar ? Self.sidebarWidth : 0), height: px.height / scale + chrome)
         } else if let item, compare {
             let sizes = item.urls.compactMap(pixelSize)
             let h = sizes.map(\.height).max() ?? 1000
@@ -191,7 +194,8 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             size = NSSize(width: w / scale + CGFloat(sizes.count + 1) * 16, height: h / scale + chrome)
         }
         let k = min(1, maxW / size.width, maxH / size.height)
-        let w = max(560, size.width * k), h = max(400, size.height * k)
+        let w = max(sidebar ? min(800, maxW) : 560, size.width * k)
+        let h = max(sidebar ? min(520, maxH) : 400, size.height * k)
         return NSRect(x: vf.midX - w / 2, y: vf.midY - h / 2, width: w, height: h).integral
     }
 
@@ -205,6 +209,40 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     private var showStrip: Bool { (item?.files.count ?? 0) > 1 && !compare }
+
+    func windowDidResize(_ notification: Notification) {
+        layoutContent()
+    }
+
+    /// The sidebar and detail share a boundary; documents never run beneath navigation.
+    private func layoutContent() {
+        guard let win = window, let container = win.contentView else { return }
+        let bounds = container.bounds
+        let sidebar = showStrip && bounds.width >= Self.sidebarBreakpoint
+        if strip.sidebar != sidebar { strip.sidebar = sidebar }
+        stripHost?.isHidden = !showStrip
+        let left = sidebar ? Self.sidebarWidth : 0
+        let bottom: CGFloat = showStrip && !sidebar ? 84 : 0
+        let contentHeight = min(bounds.height, win.contentLayoutRect.height)
+        stripHost?.frame = sidebar
+            ? NSRect(x: 0, y: 0, width: left, height: contentHeight)
+            : NSRect(x: 0, y: 0, width: bounds.width, height: bottom)
+        for view in [main, swipeOutgoing].compactMap({ $0 }) {
+            let image = view as? ZoomImageView
+            view.frame = NSRect(x: left, y: image != nil || compare ? 0 : bottom,
+                                width: max(0, bounds.width - left),
+                                height: image != nil || compare ? bounds.height : max(0, contentHeight - bottom))
+            if let image {
+                image.topInset = max(28, bounds.height - contentHeight)
+                image.bottomInset = bottom
+            }
+        }
+    }
+
+    func isOverNavigation(_ event: NSEvent) -> Bool {
+        guard showStrip, let host = stripHost, let container = window?.contentView else { return false }
+        return host.frame.contains(container.convert(event.locationInWindow, from: nil))
+    }
 
     // MARK: content
 
@@ -225,7 +263,8 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         if compare {
             compareZoom.reset()
             let images = item.urls.map { NSImage(contentsOf: $0) ?? NSWorkspace.shared.icon(forFile: $0.path) }
-            let host = NSHostingView(rootView: CompareView(images: images, names: item.files.map(\.name), zoom: compareZoom))
+            let host = NSHostingView(rootView: CompareView(images: images, names: item.files.map(\.name), zoom: compareZoom,
+                                                         pick: { [weak self] i in self?.select(i) }))
             host.sizingOptions = []
             view = host
         } else {
@@ -234,21 +273,8 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         if outgoing != nil { positionSwipeView(view, at: incomingOffset) }
         container.addSubview(view, positioned: .below, relativeTo: outgoing ?? stripHost)
         if help.visible { toggleHelp() }
-        if view is ZoomImageView || compare {
-            // Images run under the glass toolbar; ZoomImageView insets itself.
-            view.frame = container.bounds
-            view.autoresizingMask = [.width, .height]
-        } else if let guide = win.contentLayoutGuide as? NSLayoutGuide {
-            // Documents start below the toolbar.
-            view.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                view.topAnchor.constraint(equalTo: guide.topAnchor),
-                view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            ])
-        }
         main = view
+        layoutContent()
 
         let cachedThumbs = Thumbs.cached(item) ?? []
         strip.thumbs = cachedThumbs
@@ -262,12 +288,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
                 self.strip.thumbs = imgs
             }
         }
-        if let z = view as? ZoomImageView {
-            z.topInset = max(28, win.frame.height - win.contentLayoutRect.height)
-            z.bottomInset = showStrip ? 84 : 0
-        }
-
-        win.title = item.displayTitle
+        win.title = showStrip ? item.files[index].name : item.displayTitle
         var sub = item.conversationTitle
         if item.files.count > 1 && !compare { sub += " · \(index + 1)/\(item.files.count)" }
         sub += " · " + RelativeTime.string(item.created, now: Date())
@@ -297,13 +318,14 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     private func select(_ i: Int) {
-        guard let item, i >= 0, i < item.files.count, i != index else { return }
+        guard let item, i >= 0, i < item.files.count, i != index || compare else { return }
         index = i
+        compare = false
         reloadContent()
     }
 
     func step(_ d: Int) {
-        guard let item, !compare, item.files.count > 1 else { return }
+        guard let item, item.files.count > 1 else { return }
         select((index + d + item.files.count) % item.files.count)
     }
 
@@ -343,7 +365,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
 
         guard let item else { return }
-        let destination = container.bounds.width * (direction > 0 ? -1 : 1)
+        let destination = outgoing.bounds.width * (direction > 0 ? -1 : 1)
         // Prepare both views and their animations in one render transaction.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -423,7 +445,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func toggleCompare() {
-        guard let item, item.files.count > 1, let win = window else { return }
+        guard let item, item.files.count > 1, item.allImages, let win = window else { return }
         compare.toggle()
         reloadContent()
         let screen = win.screen ?? NSScreen.main ?? NSScreen.screens[0]
@@ -443,7 +465,12 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         helpHost?.isHidden = !help.visible
     }
 
-    /// ↑ / ↓: the next newer / older card.
+    /// ↑ / ↓ follows the visible file list; single-file cards still walk history.
+    func stepVertical(_ d: Int) {
+        if (item?.files.count ?? 0) > 1 { step(d) } else { stepCard(d) }
+    }
+
+    /// ⌥↑ / ⌥↓: the next newer / older card.
     func stepCard(_ d: Int) {
         guard let item else { return }
         app?.openNeighbor(item.id, d)
@@ -554,7 +581,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             let multi = (item?.files.count ?? 0) > 1
             var wanted: [NSToolbarItem.Identifier] = [.flexibleSpace]
             if multi && !compare { wanted.append(ID.nav) }
-            if multi { wanted.append(ID.compare) }
+            if multi && item?.allImages == true { wanted.append(ID.compare) }
             wanted.append(contentsOf: [ID.copy, ID.reveal])
             if item?.origin?.canJump ?? false { wanted.append(ID.jump) }
             if toolbar.items.map(\.itemIdentifier) != wanted {
@@ -574,7 +601,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             setToolbarItemHidden(t, !multi || compare)
             t.label = L10n.tr("切换", "Navigate")
         case ID.compare:
-            setToolbarItemHidden(t, !multi)
+            setToolbarItemHidden(t, !multi || item?.allImages != true)
             t.image = NSImage(systemSymbolName: compare ? "square" : "rectangle.split.2x1", accessibilityDescription: nil)
             t.label = compare
                 ? L10n.tr("单张查看  ⌘D", "Single View  ⌘D")
@@ -645,6 +672,12 @@ final class ViewerWindow: NSPanel {
 
     // Intercept before NSScrollView, PDFKit or WebKit consumes the scroll event.
     override func sendEvent(_ event: NSEvent) {
+        // WebKit and SwiftUI can otherwise consume arrows before the window sees them.
+        if event.type == .keyDown, [123, 124, 125, 126].contains(event.keyCode),
+           event.modifierFlags.intersection([.command, .control]).isEmpty {
+            keyDown(with: event)
+            return
+        }
         if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .magnify {
             cancelSwipeTracking()
             viewer?.cancelSwipeAnimation()
@@ -658,7 +691,7 @@ final class ViewerWindow: NSPanel {
         guard event.phase.isEmpty, event.momentumPhase.isEmpty,
               event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
               abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
-              let viewer, viewer.acceptsWheelNavigation else { return false }
+              let viewer, !viewer.isOverNavigation(event), viewer.acceptsWheelNavigation else { return false }
         let direction = event.scrollingDeltaY < 0 ? 1 : -1
         // One detent may arrive as a burst; keep quick direction reversals responsive.
         if let last = lastWheelNavigation, last.direction == direction,
@@ -677,7 +710,7 @@ final class ViewerWindow: NSPanel {
         if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
             // Resting fingers can emit mayBegin while the release animation runs.
             resetSwipe(cancelAnimation: event.phase.contains(.began))
-            trackingSwipe = viewer?.acceptsSwipeNavigation ?? false
+            trackingSwipe = (viewer?.acceptsSwipeNavigation ?? false) && !(viewer?.isOverNavigation(event) ?? false)
         }
         guard !event.phase.isEmpty else { return false }
         guard trackingSwipe else { return swipeAxis == .horizontal || swipeAxis == .discarded }
@@ -725,8 +758,10 @@ final class ViewerWindow: NSPanel {
         case 13 where cmd: v.done()                                // ⌘W
         case 123 where plain: v.step(-1)                            // ←
         case 124 where plain: v.step(1)                             // →
-        case 126 where plain: v.stepCard(-1)                        // ↑ newer card
-        case 125 where plain: v.stepCard(1)                         // ↓ older card
+        case 126 where plain: v.stepVertical(-1)                    // ↑ previous file
+        case 125 where plain: v.stepVertical(1)                     // ↓ next file
+        case 126 where m == .option: v.stepCard(-1)                 // ⌥↑ newer card
+        case 125 where m == .option: v.stepCard(1)                  // ⌥↓ older card
         case 36 where m.isEmpty, 76 where m.isEmpty, 36 where cmd: v.jumpBack()   // ↩ back to the conversation
         case 8 where cmd: v.copyCurrent()                           // ⌘C
         case 15 where cmd: v.revealCurrent()                        // ⌘R
@@ -743,6 +778,15 @@ final class ViewerWindow: NSPanel {
 
     // Esc that a web / PDF view passes up the responder chain.
     override func cancelOperation(_ sender: Any?) { viewer?.escape() }
+}
+
+private final class ViewerContentView: NSView {
+    var onResize: (() -> Void)?
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        onResize?()
+    }
 }
 
 // MARK: - zoomable image
@@ -864,6 +908,7 @@ final class StripModel: ObservableObject {
     @Published var names: [String] = []
     @Published var selected = 0
     @Published var visible = false
+    @Published var sidebar = false
 }
 
 struct FilmstripView: View {
@@ -873,26 +918,86 @@ struct FilmstripView: View {
 
     var body: some View {
         if m.visible {
-            ViewThatFits(in: .horizontal) {
-                row
-                    .padding(8)
-                    .peekGlass(in: pillShape)
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        row.padding(8)
-                    }
-                    .peekGlass(in: pillShape)
-                    .padding(.horizontal, 16)
-                    .onChange(of: m.selected) { _, idx in
-                        withAnimation(.snappy(duration: 0.22)) {
-                            proxy.scrollTo(idx, anchor: .center)
+            if m.sidebar {
+                sidebar
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    row
+                        .padding(8)
+                        .peekGlass(in: pillShape)
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            row.padding(8)
+                        }
+                        .peekGlass(in: pillShape)
+                        .padding(.horizontal, 16)
+                        .onChange(of: m.selected) { _, idx in
+                            withAnimation(.snappy(duration: 0.22)) {
+                                proxy.scrollTo(idx, anchor: .center)
+                            }
                         }
                     }
                 }
+                .animation(.snappy(duration: 0.22), value: m.selected)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .animation(.snappy(duration: 0.22), value: m.selected)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var sidebar: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 8) {
+                    ForEach(Array(m.names.enumerated()), id: \.offset) { i, name in
+                        Button { pick(i) } label: {
+                            VStack(spacing: 7) {
+                                Group {
+                                    if i < m.thumbs.count {
+                                        Image(nsImage: m.thumbs[i]).resizable().aspectRatio(contentMode: .fit)
+                                    } else {
+                                        Color.white.opacity(0.06)
+                                    }
+                                }
+                                .frame(width: 132, height: thumbnailHeight(i))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                Text(name)
+                                    .font(.system(size: 11, weight: i == m.selected ? .semibold : .regular))
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                    .multilineTextAlignment(.center)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity)
+                            .background(RoundedRectangle(cornerRadius: 8)
+                                .fill(i == m.selected ? Color.accentColor.opacity(0.24) : .clear))
+                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(i == m.selected ? Color.accentColor : .clear, lineWidth: 1.5))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(name)
+                        .accessibilityLabel(name)
+                        .accessibilityAddTraits(i == m.selected ? .isSelected : [])
+                        .id(i)
+                    }
+                }
+                .padding(10)
+            }
+            .background(Color(nsColor: NSColor(white: 0.105, alpha: 1)))
+            .overlay(alignment: .trailing) { Color.white.opacity(0.08).frame(width: 1) }
+            .onAppear { proxy.scrollTo(m.selected, anchor: .center) }
+            .onChange(of: m.selected) { _, idx in
+                withAnimation(.snappy(duration: 0.22)) { proxy.scrollTo(idx, anchor: .center) }
+            }
+        }
+    }
+
+    private func thumbnailHeight(_ index: Int) -> CGFloat {
+        guard index < m.thumbs.count else { return 100 }
+        let size = m.thumbs[index].size
+        guard size.width > 0 else { return 100 }
+        return min(220, max(54, 132 * size.height / size.width))
     }
 
     private var row: some View {
@@ -919,6 +1024,7 @@ struct FilmstripView: View {
                 .buttonStyle(.plain)
                 .help(name)
                 .accessibilityLabel(name)
+                .accessibilityAddTraits(i == m.selected ? .isSelected : [])
                 .id(i)
             }
         }
@@ -957,6 +1063,7 @@ struct CompareView: View {
     let images: [NSImage]
     var names: [String] = []
     @ObservedObject var zoom = CompareZoomModel()
+    var pick: (Int) -> Void = { _ in }
 
     var body: some View {
         GeometryReader { geo in
@@ -966,24 +1073,29 @@ struct CompareView: View {
             ScrollView([.horizontal, .vertical], showsIndicators: s > 1.01) {
                 HStack(spacing: 16) {
                     ForEach(Array(images.enumerated()), id: \.offset) { i, img in
-                        VStack(spacing: 8) {
-                            Image(nsImage: img)
-                                .resizable()
-                                .interpolation(.high)
-                                .aspectRatio(contentMode: .fit)
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
-                            if i < names.count, !names[i].isEmpty {
-                                Text(names[i])
-                                    .font(.system(size: 11.5, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.75))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
-                                    .background(Capsule().fill(.white.opacity(0.08)))
+                        Button { pick(i) } label: {
+                            VStack(spacing: 8) {
+                                Image(nsImage: img)
+                                    .resizable()
+                                    .interpolation(.high)
+                                    .aspectRatio(contentMode: .fit)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                    .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
+                                if i < names.count, !names[i].isEmpty {
+                                    Text(names[i])
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundStyle(.white.opacity(0.75))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(.white.opacity(0.08)))
+                                }
                             }
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(i < names.count ? names[i] : "\(i + 1)")
                     }
                 }
                 .padding(.horizontal, 16)
@@ -1019,7 +1131,8 @@ struct ShortcutSheet: View {
             ("←  →", L10n.tr("切换这张卡里的文件", "Previous / next file")),
             (L10n.tr("双指左右滑", "Swipe ↔"), L10n.tr("上一张 / 下一张文件", "Previous / next file")),
             (L10n.tr("滚轮上下", "Scroll ↕"), L10n.tr("上一张 / 下一张图片", "Previous / next image")),
-            ("↑  ↓", L10n.tr("上一张 / 下一张卡", "Newer / older card")),
+            ("↑  ↓", L10n.tr("切换文件（单文件时切换卡片）", "Files (cards for single files)")),
+            ("⌥↑  ⌥↓", L10n.tr("上一张 / 下一张卡", "Newer / older card")),
             ("↩", L10n.tr("回到对话", "Jump to session")),
             ("⌘C", L10n.tr("拷贝", "Copy")),
             ("⌘R", L10n.tr("在访达中显示", "Reveal in Finder")),

@@ -6,18 +6,67 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct ViewerSwipeTests {
-    @Test func externalDisplayOpensImagesSideBySide() async throws {
+    @Test func multipleImagesOpenWithSidebarOnEveryDisplay() async throws {
         for screen in NSScreen.screens {
-            let displayID = try #require(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID)
-            guard CGDisplayIsBuiltin(displayID) == 0 else { continue }
             try await withViewer(allowComparison: true, on: screen) { viewer, window in
-                #expect(viewer.snapshot()["compare"] as? Bool == true)
-                #expect(window.contentView?.subviews.contains { $0 is ZoomImageView } == false)
-                viewer.toggleCompare()
                 #expect(viewer.snapshot()["compare"] as? Bool == false)
+                #expect(viewer.snapshot()["navigation"] as? String == "sidebar")
+                let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
+                #expect(image.frame.minX == 172)
                 viewer.step(1)
                 #expect(viewer.snapshot()["index"] as? Int == 1)
             }
+        }
+    }
+
+    @Test func comparisonClickOpensTheChosenDetailIncludingCurrentImage() async throws {
+        try await withViewer { viewer, window in
+            for selected in [2, 2, 0] {
+                viewer.toggleCompare()
+                let comparison = try #require(window.contentView?.subviews.compactMap { $0 as? NSHostingView<CompareView> }.first)
+                comparison.rootView.pick(selected)
+                #expect(viewer.snapshot()["compare"] as? Bool == false)
+                #expect(viewer.snapshot()["index"] as? Int == selected)
+                #expect(viewer.snapshot()["file"] as? String == "\(selected).png")
+                #expect(viewer.snapshot()["navigation"] as? String == "sidebar")
+            }
+        }
+    }
+
+    @Test func sidebarClickAndArrowKeysNavigateTheSameSelection() async throws {
+        try await withViewer(fileCount: 7) { viewer, window in
+            let strip = try #require(window.contentView?.subviews.compactMap { $0 as? NSHostingView<FilmstripView> }.first)
+            strip.rootView.pick(5)
+            #expect(viewer.snapshot()["index"] as? Int == 5)
+            for (code, index) in [(125, 6), (126, 5), (123, 4), (124, 5)] {
+                let key = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                    timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                    characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: UInt16(code)))
+                window.sendEvent(key)
+                #expect(viewer.snapshot()["index"] as? Int == index)
+                #expect(strip.rootView.m.selected == index)
+            }
+        }
+    }
+
+    @Test func resizingPreservesSelectionAndKeepsDocumentsAboveFilmstrip() async throws {
+        try await withViewer(document: true) { viewer, window in
+            viewer.step(1)
+            let web = try #require(window.contentView?.subviews.compactMap { $0 as? WebDocView }.first)
+            #expect(web.frame.minX == 172)
+            var frame = window.frame
+            frame.size.width = 640
+            window.setFrame(frame, display: false)
+            window.contentView?.layoutSubtreeIfNeeded()
+            #expect(viewer.snapshot()["navigation"] as? String == "filmstrip")
+            #expect(web.frame.minX == 0)
+            #expect(web.frame.minY == 84)
+            frame.size.width = 1000
+            window.setFrame(frame, display: false)
+            #expect(viewer.snapshot()["navigation"] as? String == "sidebar")
+            #expect(web.frame.minX == 172)
+            #expect(web.frame.minY == 0)
+            #expect(viewer.snapshot()["index"] as? Int == 1)
         }
     }
 
@@ -116,6 +165,10 @@ struct ViewerSwipeTests {
 
     @Test func verticallyEnlargedImageKeepsWheelScrolling() async throws {
         try await withViewer { viewer, window in
+            var frame = window.frame
+            frame.size = NSSize(width: 1100, height: 520)
+            window.setFrame(frame, display: false)
+            window.contentView?.layoutSubtreeIfNeeded()
             let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
             let document = try #require(image.documentView)
             // Fit the width while overflowing vertically on both 1x and 2x screens.

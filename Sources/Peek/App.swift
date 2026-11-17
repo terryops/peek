@@ -131,11 +131,11 @@ final class App: NSObject, NSApplicationDelegate {
     // MARK: actions
 
     /// Opens in Peek's own viewer (never Preview), zooming out of the card.
-    func open(_ id: String, from rect: NSRect? = nil) {
+    func open(_ id: String, from rect: NSRect? = nil, selectedIndex: Int? = nil) {
         guard var item = item(id) else { return }
         guard item.urls.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return }
         if dryRun { log("open \(item.urls.map(\.lastPathComponent))") }
-        Viewer.shared.show(item, from: rect)
+        Viewer.shared.show(item, from: rect, selectedIndex: selectedIndex)
         item.seen = true
         item.lastOpened = Date()
         commit(item)

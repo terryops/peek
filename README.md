@@ -38,7 +38,7 @@ Paste this rule into `~/.claude/CLAUDE.md`, `AGENTS.md`, or your editor's global
 Whenever you generate screenshots, UI comparisons, charts, PDFs, or Markdown/HTML reports for me to inspect, push them to a floating card with `peek`:
 
 - Run `peek -t "Short Title" <file…>` (on remote SSH hosts where `~/.local/bin` is not in `PATH`, run `~/.local/bin/peek -t "Short Title" <file…>`).
-- Pass related images (such as before/after UI diffs or variants) in a single `peek` command so they open side-by-side in one card.
+- Pass related images (such as before/after UI diffs or variants) in a single `peek` command to browse them together with thumbnails; press `⌘D` for side-by-side comparison.
 - Keep CSS, JS, and images referenced by Markdown or HTML as relative paths inside the same folder—`peek` snapshots them with the card automatically, so overwriting files later will not affect earlier cards.
 - Never run `open` or `qlmanage -p` on preview files (it steals window focus), and never leave bare file paths without pushing them via `peek`.
 ```
@@ -49,7 +49,7 @@ Whenever you generate screenshots, UI comparisons, charts, PDFs, or Markdown/HTM
 # Push a Markdown or HTML report (relative images, CSS, and JS are bundled automatically)
 peek -t "Auth Latency Audit" report.md
 
-# Push before/after screenshots in ONE call so they open together for side-by-side comparison
+# Push before/after screenshots together; browse thumbnails or press ⌘D to compare
 peek -t "Checkout Header Diff" before.png after.png
 
 # Explicitly label a subagent or background task in the card header
