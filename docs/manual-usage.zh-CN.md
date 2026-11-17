@@ -39,6 +39,21 @@ peek --quit              # 退出菜单栏后台应用
 
 直接复用系统 `/usr/bin/ssh`（沿用 `~/.ssh/config`、密钥、SSH agent 与跳板机），从远程 Linux 或 macOS（`amd64` / `arm64`）向本机推文件，无需账号、中继服务或 Mac 入站端口：
 
+Agent 可在接收端 Mac 上直接管理连接，无需打开窗口：
+
+```sh
+peek remote add user@server --name "构建机" --wait --json
+peek remote list --json
+peek remote command "构建机"
+peek remote disconnect "构建机"
+peek remote connect "构建机" --wait
+peek remote remove "构建机"
+```
+
+可用名称、SSH 地址或连接 ID 指定主机。`--wait` 等待安装并连接成功，`--timeout <秒数>` 调整等待时限（默认 60，最多 300 秒）；失败退出码为非零。`remote command` 输出包含当前 Mac 接收端 UUID 的远端发送命令。
+
+手动连接方式：
+
 1. 点击菜单栏 Peek 图标 →「远程机器…」，或执行 `peek --remote-settings`。
 2. 输入 SSH 别名、`user@host` 或 `user@host:port` 并点击「连接」。首次遇到未知主机指纹或需要密码时使用系统原生验证窗口，密码不会落盘保存。
 3. 点击「拷贝命令」，粘贴到远程终端并在末尾附上文件路径：

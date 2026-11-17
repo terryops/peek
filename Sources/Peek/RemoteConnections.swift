@@ -51,8 +51,10 @@ enum RemoteConnectionState: Equatable {
         if let index = hosts.firstIndex(where: { $0.address == address }) {
             let id = hosts[index].id
             if let explicitLabel, hosts[index].label != explicitLabel {
+                let previous = hosts[index].label
                 hosts[index].label = explicitLabel
-                try? persist()
+                do { try persist() }
+                catch { hosts[index].label = previous; throw error }
             }
             switch states[id] ?? .disconnected {
             case .connected, .connecting, .installing:

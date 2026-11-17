@@ -2,7 +2,7 @@ import AppKit
 
 enum CLI {
     static var versionString: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?.nonEmpty ?? "1.1.1"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?.nonEmpty ?? "1.2.0"
     }
 
     static var usage: String {
@@ -10,6 +10,7 @@ enum CLI {
         用法：
           peek [-t 标题] [-c 对话名] 文件…   推到屏幕右上角的卡片，点卡片才打开（图片 / PDF / Markdown / HTML）
           peek --remote-settings   管理远程机器
+          peek remote <子命令>     无界面管理远程机器（remote --help 查看用法）
           peek --list              列出 24 小时内的卡片
           peek --clear             全部清空
           peek --quit              退出后台的 Peek
@@ -18,6 +19,7 @@ enum CLI {
         Usage:
           peek [-t title] [-c session] files…   Push to a top-right preview card (images / PDF / Markdown / HTML)
           peek --remote-settings   Manage remote SSH machines
+          peek remote <command>   Manage remotes without a window (remote --help)
           peek --list              List cards from the last 24 hours
           peek --clear             Clear all cards and cached snapshots
           peek --quit              Quit background Peek app
@@ -26,6 +28,7 @@ enum CLI {
     }
 
     static func main(_ args: [String]) -> Int32 {
+        if args.first == "remote" { return RemoteControl.run(Array(args.dropFirst())) }
         var title: String?
         var source: String?
         var paths: [String] = []

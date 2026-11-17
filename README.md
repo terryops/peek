@@ -26,7 +26,7 @@ Make sure `$HOME/bin` is in your shell `PATH` (for example, `export PATH="$HOME/
 
 ### On remote SSH servers *(optional)*
 
-If your agents run on remote Linux or macOS machines (`amd64` / `arm64`), click the Peek menu bar icon → **Remote Machines…** (*远程机器…*), enter your SSH alias, `user@host`, or `user@host:port`, and click **Connect**. Peek installs `~/.local/bin/peek` on the remote host over your existing `/usr/bin/ssh` setup (`~/.ssh/config`, keys, SSH agent, JumpHosts) with no cloud relay or inbound ports—remote agents can then push cards straight to your Mac.
+If your agents run on remote Linux or macOS machines (`amd64` / `arm64`), run `peek remote add user@host --wait --json`, or connect through **Remote Machines…** in the Peek menu. Peek installs `~/.local/bin/peek` on the remote host over your existing `/usr/bin/ssh` setup (`~/.ssh/config`, keys, SSH agent, JumpHosts) with no cloud relay or inbound ports—remote agents can then push cards straight to your Mac.
 
 ## 2. Add Rule to `CLAUDE.md` / `AGENTS.md`
 

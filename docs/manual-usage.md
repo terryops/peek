@@ -39,6 +39,21 @@ peek --quit              # quit the background menu bar app
 
 Push files from remote Linux or macOS machines (`amd64` / `arm64`) over your existing `/usr/bin/ssh` configuration (`~/.ssh/config`, keys, SSH agent, JumpHosts) with no relay service or inbound ports on your Mac:
 
+Agents can manage connections without opening a settings window:
+
+```sh
+peek remote add user@server --name "Build server" --wait --json
+peek remote list --json
+peek remote command "Build server"
+peek remote disconnect "Build server"
+peek remote connect "Build server" --wait
+peek remote remove "Build server"
+```
+
+Run these on the receiving Mac. Select a host by name, SSH address, or connection ID. `--wait` waits for installation and connection; `--timeout <seconds>` sets a limit (default 60, maximum 300). JSON errors return a nonzero exit status. The `command` subcommand prints the remote sender command with the current Mac's target UUID.
+
+To connect manually:
+
 1. Open the Peek menu bar icon → **Remote Machines…** (*远程机器…*), or run `peek --remote-settings`.
 2. Enter an SSH alias, `user@host`, or `user@host:port` and click **Connect**. Unknown host fingerprints and passwords use native macOS verification dialogs; passwords are never stored.
 3. Click **Copy Command**, paste it on the remote machine, and append file paths:

@@ -8,6 +8,21 @@ Peek 在 Mac 上接收 SSH 主机生成的图片、PDF、Markdown 和 HTML。需
 
 ## 首次连接
 
+Agent 可直接用 CLI 管理连接，不会打开设置窗口：
+
+```sh
+peek remote add user@server --name "构建机" --wait --json
+peek remote list --json
+peek remote command "构建机"
+peek remote disconnect "构建机"
+peek remote connect "构建机" --wait
+peek remote remove "构建机"
+```
+
+这些命令在接收端 Mac 上执行，使用后台 Peek 的同一份连接配置与 SSH 会话。可按名称、SSH 地址或连接 ID 选择主机；名称重复时使用 ID。`--wait` 等到连接和安装成功后才返回，`--timeout 60` 可调整等待秒数（最多 300 秒）。`--json` 返回结构化状态，失败退出码为非零。`remote command` 输出可在远端运行的发送命令，包含当前接收端 UUID。
+
+也可手动使用设置窗口：
+
 1. 打开菜单栏 Peek →「远程机器…」，或执行 `peek --remote-settings`。
 2. 输入 SSH 别名、`user@host` 或 `user@host:port`，点「连接」。Peek 使用系统 SSH，沿用 `~/.ssh/config`、跳板机、密钥和 SSH agent。
 3. 首次遇到未知主机时，核对原生验证窗口里的指纹后再信任。密码和私钥口令使用安全输入框，不会保存。取消验证会停止本次连接，可以手动重试。

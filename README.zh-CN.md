@@ -26,7 +26,7 @@ ln -sfn "/Applications/Peek.app/Contents/MacOS/Peek" "$HOME/bin/peek"
 
 ### 在远程 SSH 服务器上 *（可选）*
 
-如果 Agent 跑在远程 Linux 或 macOS 服务器（`amd64` / `arm64`）上，点击菜单栏 Peek 图标 →「远程机器…」，输入 SSH 别名、`user@host` 或 `user@host:port` 并点击「连接」。Peek 会直接复用系统 `/usr/bin/ssh`（沿用 `~/.ssh/config`、密钥、SSH agent 与跳板机）在远端安装 `~/.local/bin/peek`，无需任何云端中继或开放入站端口，远端 Agent 即可把文件直接推回当前 Mac。
+如果 Agent 跑在远程 Linux 或 macOS 服务器（`amd64` / `arm64`）上，可直接执行 `peek remote add user@host --wait --json`，或在菜单栏 Peek →「远程机器…」中连接。Peek 会复用系统 `/usr/bin/ssh`（沿用 `~/.ssh/config`、密钥、SSH agent 与跳板机）在远端安装 `~/.local/bin/peek`，无需任何云端中继或开放入站端口，远端 Agent 即可把文件直接推回当前 Mac。
 
 ## 2. 写入全局规则（`CLAUDE.md` / `AGENTS.md`）
 

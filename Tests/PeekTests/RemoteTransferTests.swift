@@ -365,8 +365,8 @@ struct RemoteTransferTests {
                                  targetId: target, resourceDirectory: root, sshExecutable: script)
         conn.onState = { state in
             if state == .installing { sawInstalling = true }
-            if state == .connected { connected.signal() }
         }
+        conn.onReady = { _ in connected.signal() }
         conn.start()
         defer { conn.cancel() }
         let reached = await withCheckedContinuation { cont in

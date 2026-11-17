@@ -39,6 +39,9 @@ final class App: NSObject, NSApplicationDelegate {
 
         remoteConnections.start()
         let dnc = DistributedNotificationCenter.default()
+        dnc.addObserver(self, selector: #selector(remoteControlNotification), name: RemoteControl.notification, object: nil,
+                        suspensionBehavior: .deliverImmediately)
+        remoteControlNotification()
         dnc.addObserver(self, selector: #selector(settingsNotification), name: CLI.settingsNotification, object: nil,
                         suspensionBehavior: .deliverImmediately)
         settingsNotification()
@@ -115,6 +118,10 @@ final class App: NSObject, NSApplicationDelegate {
     @MainActor func showRemoteSettings() { remoteSettings.present() }
     @MainActor @objc private func settingsNotification() {
         if CLI.consumeSettingsRequest() { showRemoteSettings() }
+    }
+
+    @MainActor @objc private func remoteControlNotification() {
+        RemoteControl.consume(using: remoteConnections)
     }
 
     @objc private func changedNotification() { scheduleReload() }
