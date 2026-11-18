@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 import Testing
 @testable import Peek
@@ -52,20 +53,21 @@ struct ViewerSwipeTests {
     @Test func resizingPreservesSelectionAndKeepsDocumentsAboveFilmstrip() async throws {
         try await withViewer(document: true) { viewer, window in
             viewer.step(1)
-            let web = try #require(window.contentView?.subviews.compactMap { $0 as? WebDocView }.first)
-            #expect(web.frame.minX == 172)
+            let page = try #require(window.contentView?.subviews.compactMap { $0 as? ViewerDocumentPage }.first)
+            #expect(page.document is WebDocView)
+            #expect(page.frame.minX == 172)
             var frame = window.frame
             frame.size.width = 640
             window.setFrame(frame, display: false)
             window.contentView?.layoutSubtreeIfNeeded()
             #expect(viewer.snapshot()["navigation"] as? String == "filmstrip")
-            #expect(web.frame.minX == 0)
-            #expect(web.frame.minY == 84)
+            #expect(page.frame.minX == 0)
+            #expect(page.frame.minY == 84)
             frame.size.width = 1000
             window.setFrame(frame, display: false)
             #expect(viewer.snapshot()["navigation"] as? String == "sidebar")
-            #expect(web.frame.minX == 172)
-            #expect(web.frame.minY == 0)
+            #expect(page.frame.minX == 172)
+            #expect(page.frame.minY == 0)
             #expect(viewer.snapshot()["index"] as? Int == 1)
         }
     }
@@ -139,7 +141,7 @@ struct ViewerSwipeTests {
             image.layoutSubtreeIfNeeded()
             scroll(window, x: 0, y: 3, phase: [], precise: false)
             #expect(viewer.snapshot()["index"] as? Int == 0)
-            image.magnification = 0.5
+            image.magnification = image.minMagnification
             image.layoutSubtreeIfNeeded()
             scroll(window, x: 0, y: 3, phase: [], precise: false)
             #expect(viewer.snapshot()["index"] as? Int == 1)
@@ -310,19 +312,78 @@ struct ViewerSwipeTests {
         }
     }
 
-    @Test func shortVerticalAndCancelledSwipesDoNotChangeFiles() async throws {
+    @Test func verticalTrackpadSwipeMovesSelectionOnceInEitherDirection() async throws {
+        try await withViewer { viewer, window in
+            let strip = try #require(window.contentView?.subviews.compactMap { $0 as? NSHostingView<FilmstripView> }.first)
+            #expect(strip.rootView.m.sidebar)
+            scroll(window, x: 0, phase: .began)
+            for _ in 0..<4 { scroll(window, x: 0, y: 40, phase: .changed) }
+            #expect(strip.rootView.m.selected == 0)
+            let pages = window.contentView?.subviews.compactMap { $0 as? ZoomImageView } ?? []
+            let preview = pages.first { ($0.layer?.transform.m42 ?? 0) < 0 }
+            scroll(window, x: 0, phase: .ended)
+            if !Anim.reduceMotion {
+                let incoming = try #require(preview)
+                #expect(incoming.superview === window.contentView)
+                #expect(incoming.layer?.transform.m42 == 0)
+                #expect((incoming.layer?.animation(forKey: "viewerSwipe") as? CABasicAnimation)?.keyPath
+                    == "transform.translation.y")
+            }
+            scroll(window, x: 0, y: 240, phase: [], momentum: .began)
+            scroll(window, x: 0, y: 150, phase: [], momentum: .changed)
+            #expect(viewer.snapshot()["index"] as? Int == 1)
+            #expect(strip.rootView.m.selected == 1)
+            swipe(window, x: 0, y: -100)
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+            #expect(strip.rootView.m.selected == 0)
+        }
+    }
+
+    @Test func verticalDragKeepsBothPagesVisibleHalfwayAndCanReverse() async throws {
+        try await withViewer { viewer, window in
+            let container = try #require(window.contentView)
+            let current = try #require(container.subviews.compactMap { $0 as? ZoomImageView }.first)
+            let height = window.contentLayoutRect.height
+            let half = Int32(height / 2)
+            scroll(window, x: 0, phase: .began)
+            scroll(window, x: 0, y: half, phase: .changed)
+            try await Task.sleep(for: .milliseconds(70))
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+            if !Anim.reduceMotion {
+                let next = try #require(container.subviews.compactMap { $0 as? ZoomImageView }.first { $0 !== current })
+                #expect(current.layer?.transform.m42 == CGFloat(half))
+                #expect(next.layer?.transform.m42 == CGFloat(half) - height)
+                scroll(window, x: 0, y: -half - 35, phase: .changed)
+                let previous = try #require(container.subviews.compactMap { $0 as? ZoomImageView }.first { $0 !== current })
+                #expect(previous !== next)
+                #expect(current.layer?.transform.m42 == -35)
+            } else {
+                scroll(window, x: 0, y: -half - 35, phase: .changed)
+            }
+            scroll(window, x: 0, phase: .ended)
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+            #expect(current.layer?.transform.m42 ?? 0 == 0)
+            try await Task.sleep(for: .milliseconds(400))
+            #expect(container.subviews.compactMap { $0 as? ZoomImageView }.count == 1)
+        }
+    }
+
+    @Test func shortAndCancelledSwipesDoNotChangeFiles() async throws {
         try await withViewer { viewer, window in
             swipe(window, x: -15)
-            swipe(window, x: -100, y: 200)
+            swipe(window, x: 0, y: 35)
             scroll(window, x: 0, phase: .began)
             scroll(window, x: -100, phase: .changed)
+            scroll(window, x: 0, phase: .cancelled)
+            scroll(window, x: 0, phase: .began)
+            scroll(window, x: 0, y: 100, phase: .changed)
             scroll(window, x: 0, phase: .cancelled)
             #expect(viewer.snapshot()["index"] as? Int == 0)
         }
     }
 
     @Test func verticalGestureStaysScrollingEvenIfItTurnsHorizontal() async throws {
-        try await withViewer { viewer, window in
+        try await withViewer(document: true, text: tallDocument) { viewer, window in
             scroll(window, x: 0, phase: .began)
             scroll(window, x: -2, y: 40, phase: .changed)
             scroll(window, x: -200, phase: .changed)
@@ -364,15 +425,40 @@ struct ViewerSwipeTests {
     }
 
     @Test func documentsNavigateHorizontallyAndKeepVerticalScrolling() async throws {
-        try await withViewer(document: true) { viewer, window in
+        try await withViewer(document: true, text: tallDocument) { viewer, window in
             swipe(window, x: -100)
             #expect(viewer.snapshot()["index"] as? Int == 1)
             try await waitForDocument(window)
+            let document = try #require(webDocument(in: window))
+            #expect(document.hasVerticalOverflow == true)
             swipe(window, x: 0, y: 200)
             #expect(viewer.snapshot()["index"] as? Int == 1)
             swipe(window, x: 100)
             #expect(viewer.snapshot()["index"] as? Int == 0)
             try await waitForDocument(window)
+        }
+    }
+
+    @Test func fittedWebPagesNavigateAndCommandWClosesWithWebFocus() async throws {
+        try await withViewer(document: true) { viewer, window in
+            swipe(window, x: 0, y: 100)
+            #expect(viewer.snapshot()["index"] as? Int == 1)
+            window.orderFrontRegardless()
+            try await Task.sleep(for: .milliseconds(400))
+            try await waitForDocument(window)
+            let web = try #require(webDocument(in: window))
+            #expect(web.hasVerticalOverflow == false)
+            #expect(window.makeFirstResponder(web))
+            let key = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command],
+                timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                characters: "w", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 13))
+            #expect(window.performKeyEquivalent(with: key))
+            let deadline = Date().addingTimeInterval(2)
+            while viewer.isOpen && Date() < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let closed = !viewer.isOpen
+            #expect(closed)
         }
     }
 
@@ -385,7 +471,7 @@ struct ViewerSwipeTests {
 
     @Test func pinchZoomedDocumentKeepsPanning() async throws {
         try await withViewer(document: true) { viewer, window in
-            let web = try #require(window.contentView?.subviews.compactMap { $0 as? WebDocView }.first)
+            let web = try #require(webDocument(in: window))
             web.magnification = 2
             swipe(window, x: -100)
             #expect(viewer.snapshot()["index"] as? Int == 0)
@@ -396,12 +482,18 @@ struct ViewerSwipeTests {
         try await withViewer { viewer, window in
             viewer.toggleCompare()
             swipe(window, x: -100)
+            swipe(window, x: 0, y: 100)
             #expect(viewer.snapshot()["index"] as? Int == 0)
             viewer.toggleCompare()
             viewer.toggleHelp()
             swipe(window, x: -100)
+            swipe(window, x: 0, y: 100)
             #expect(viewer.snapshot()["index"] as? Int == 0)
             viewer.toggleHelp()
+            // AppKit may still be sizing the image after leaving comparison mode.
+            window.orderFrontRegardless()
+            try await Task.sleep(for: .milliseconds(400))
+            window.contentView?.layoutSubtreeIfNeeded()
             swipe(window, x: -100)
             #expect(viewer.snapshot()["index"] as? Int == 1)
         }
@@ -413,15 +505,18 @@ struct ViewerSwipeTests {
             image.magnification = 4
             image.layoutSubtreeIfNeeded()
             swipe(window, x: -100)
+            swipe(window, x: 0, y: 100)
             #expect(viewer.snapshot()["index"] as? Int == 0)
-            image.magnification = 0.5
+            image.magnification = image.minMagnification
             image.layoutSubtreeIfNeeded()
             swipe(window, x: -100)
             #expect(viewer.snapshot()["index"] as? Int == 1)
         }
     }
 
-    private func withViewer(fileCount: Int = 3, document: Bool = false, overflow: Bool = false,
+    private var tallDocument: String { String(repeating: "A paragraph to scroll through.\n\n", count: 80) }
+
+    private func withViewer(fileCount: Int = 3, document: Bool = false, overflow: Bool = false, text: String = "# Test\n\nDocument",
                             allowComparison: Bool = false, on targetScreen: NSScreen? = nil,
                             _ body: (Viewer, ViewerWindow) async throws -> Void) async throws {
         _ = NSApplication.shared
@@ -436,8 +531,8 @@ struct ViewerSwipeTests {
                                                   isPlanar: false, colorSpaceName: .deviceRGB,
                                                   bytesPerRow: 0, bitsPerPixel: 0))
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
-        let text = overflow ? "```\n\(String(repeating: "long_line_", count: 100))\n```" : "# Test\n\nDocument"
-        for url in item.urls { try (document ? Data(text.utf8) : png).write(to: url) }
+        let documentText = overflow ? "```\n\(String(repeating: "long_line_", count: 100))\n```" : text
+        for url in item.urls { try (document ? Data(documentText.utf8) : png).write(to: url) }
         let viewer = Viewer()
         viewer.takesKey = false
         let screen = try #require(targetScreen ?? NSScreen.main)
@@ -457,12 +552,16 @@ struct ViewerSwipeTests {
     }
 
     private func waitForDocument(_ window: ViewerWindow) async throws {
-        let web = try #require(window.contentView?.subviews.compactMap { $0 as? WebDocView }.first)
+        let web = try #require(webDocument(in: window))
         let deadline = Date().addingTimeInterval(5)
         while web.hasHorizontalOverflow == nil && Date() < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(web.hasHorizontalOverflow != nil)
+    }
+
+    private func webDocument(in window: ViewerWindow) -> WebDocView? {
+        window.contentView?.subviews.lazy.compactMap { ($0 as? ViewerDocumentPage)?.document as? WebDocView }.first
     }
 
     private func swipe(_ window: ViewerWindow, x: Int32, y: Int32 = 0, precise: Bool = true) {
@@ -473,9 +572,10 @@ struct ViewerSwipeTests {
 
     private func scroll(_ window: ViewerWindow, x: Int32, y: Int32 = 0, phase: NSEvent.Phase,
                         momentum: NSEvent.Phase = [], precise: Bool = true, timestamp: TimeInterval? = nil) {
-        // Non-natural scrolling: a finger moving left produces positive deltas.
+        // For non-natural trackpad events, moving left or up produces positive deltas.
+        let trackpad = precise && (!phase.isEmpty || !momentum.isEmpty)
         let cg = CGEvent(scrollWheelEvent2Source: nil, units: precise ? .pixel : .line,
-                         wheelCount: 2, wheel1: -y, wheel2: -x, wheel3: 0)!
+                         wheelCount: 2, wheel1: trackpad ? y : -y, wheel2: -x, wheel3: 0)!
         // These events exercise the window's navigation/animation handler directly.
         // Keep pass-through events outside children: NSScrollView otherwise enters
         // native concurrent tracking, which waits for events in the system queue.

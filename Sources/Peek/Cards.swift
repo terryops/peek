@@ -105,9 +105,7 @@ final class CardInteractionView: NSView, NSDraggingSource {
         if downOnClose && card.closeRect.contains(p) {
             card.close(all: option)
         } else if !downOnClose {
-            let previewPoint = NSPoint(x: p.x, y: bounds.height - p.y)
-            let selected = card.model.previewFrames.first { $0.value.contains(previewPoint) }?.key
-            option ? card.reveal() : card.open(selectedIndex: selected)
+            option ? card.reveal() : card.open()
         }
     }
 
@@ -160,7 +158,7 @@ final class Card: NSObject {
     let panel: CardPanel
     weak var stack: CardStack?
     var targetFrame: NSRect = .zero
-    /// Ordered in and meant to be visible (false while tucked away).
+    /// Ordered in and meant to be visible.
     var shown = false
     private(set) var swiping = false
     private var swipeX: CGFloat = 0
@@ -210,12 +208,20 @@ final class Card: NSObject {
         lingerTimer = nil
     }
 
+    func hideForViewer() {
+        shown = false
+        model.shown = false
+        swiping = false
+        setHover(false, close: false)
+        panel.orderOut(nil)
+    }
+
     // MARK: actions
 
-    func open(selectedIndex: Int? = nil) {
+    func open() {
         // A click on a card tucked behind the front one just fans the deck out.
         if model.shell { stack?.pointerEntered(force: true); return }
-        stack?.app?.open(id, from: panel.frame, selectedIndex: selectedIndex)
+        stack?.app?.open(id, from: panel.frame)
     }
     func reveal() { stack?.app?.reveal(id) }
     func copyFiles() { stack?.app?.copy(id) }
@@ -233,8 +239,7 @@ final class Card: NSObject {
         if on {
             lingerTimer?.invalidate()
         } else {
-            lastTouched = Date()
-            scheduleLinger()
+            restartLinger()
         }
     }
 
@@ -264,9 +269,14 @@ final class Card: NSObject {
     // MARK: linger (opened cards leave on their own; unopened ones wait for you)
 
     var lingerExpired: Bool {
-        guard model.item.seen else { return false }
+        guard model.item.seen, !Viewer.shared.isShowing(id) else { return false }
         let since = lastTouched ?? model.item.lastOpened ?? model.item.created
         return Date().timeIntervalSince(since) >= Prefs.linger
+    }
+
+    func restartLinger() {
+        lastTouched = Date()
+        scheduleLinger()
     }
 
     private func scheduleLinger() {
@@ -366,6 +376,7 @@ final class Card: NSObject {
 /// "暂时收起" tucks the whole stack into a handle on the right edge.
 final class CardStack {
     enum Mode { case normal, tucked }
+    private static let unreadTuckDelay: TimeInterval = 5 * 60
 
     weak var app: App?
     private(set) var cards: [Card] = []
@@ -376,7 +387,11 @@ final class CardStack {
     private var loading = Set<String>()
     private let pill = StackPill()
     private let tab = EdgeTab()
-    private var stackVisible: Bool { mode == .normal || peeking }
+    private var viewerVisible = false
+    private var automaticallyTucked = false
+    private var lastExpanded = Date.distantPast
+    private var autoTuckTimer: Timer?
+    private var stackVisible: Bool { !viewerVisible && (mode == .normal || peeking) }
     private var expanded: Bool { Prefs.stacking == .list || stackHovered || peeking }
     private var windowOrder: [Int] = []
 
@@ -450,6 +465,9 @@ final class CardStack {
             // Nothing left to tuck away: the next card shows normally again.
             mode = .normal
             peeking = false
+            automaticallyTucked = false
+            lastExpanded = .distantPast
+            scheduleAutoTuck()
             tab.hide()
             pill.hide()
             stopPolling()
@@ -457,8 +475,15 @@ final class CardStack {
             screen = nil
             return
         }
+        if automaticallyTucked, cards.contains(where: { card in
+            let item = card.model.item
+            return fresh.contains(item.id) && !item.seen && Date().timeIntervalSince(item.created) < Self.unreadTuckDelay
+        }) {
+            untuck()
+        }
+        scheduleAutoTuck()
         if changed || !fresh.isEmpty { layout(fresh: fresh) }
-        if !fresh.isEmpty && !stackVisible { tab.bump() }
+        if !fresh.isEmpty && !viewerVisible && !stackVisible { tab.bump() }
         updateControls()
     }
 
@@ -466,6 +491,30 @@ final class CardStack {
         if let s = screen, !NSScreen.screens.contains(s) { screen = nil }
         layout(fresh: [])
         updateControls()
+    }
+
+    func setViewerVisible(_ visible: Bool, viewedCardID: String? = nil) {
+        guard visible != viewerVisible else { return }
+        viewerVisible = visible
+        if visible {
+            peeking = false
+            stackHovered = false
+            hoverIntent?.cancel()
+            hoverIntent = nil
+            stopPolling()
+            for card in cards { card.hideForViewer() }
+            for card in leaving { card.panel.orderOut(nil) }
+            pill.hide()
+            tab.hide()
+            pill.panel.orderOut(nil)
+            tab.panel.orderOut(nil)
+        } else {
+            lastExpanded = Date()
+            if let viewedCardID { cards.first { $0.id == viewedCardID }?.restartLinger() }
+            relayout()
+            if mode == .tucked, !cards.isEmpty { tab.show(delay: 0) }
+        }
+        scheduleAutoTuck()
     }
 
     /// Style changed: rebuild every card in the new look.
@@ -481,15 +530,18 @@ final class CardStack {
 
     // MARK: tuck / peek
 
-    func tuck() {
+    func tuck(automatic: Bool = false) {
         guard mode == .normal, !cards.isEmpty else { return }
         mode = .tucked
+        automaticallyTucked = automatic
+        autoTuckTimer?.invalidate()
+        autoTuckTimer = nil
         peeking = false
         pill.hide()
         for (i, card) in cards.enumerated() { slideOut(card, delay: Double(i) * 0.03) }
         if let s = currentScreen() { tab.place(on: s) }
         updateTab()
-        tab.show(delay: 0.12)
+        if !viewerVisible { tab.show(delay: 0.12) }
         // The mouse is probably still where the cards were; don't bounce them right back.
         stopPolling()
         stackHovered = false
@@ -498,11 +550,31 @@ final class CardStack {
     func untuck() {
         guard mode == .tucked else { return }
         mode = .normal
+        automaticallyTucked = false
+        lastExpanded = Date()
         let wasPeeking = peeking
         peeking = false
         tab.hide()
         if !wasPeeking { layout(fresh: []) }
         updateControls()
+        scheduleAutoTuck()
+    }
+
+    private func scheduleAutoTuck() {
+        autoTuckTimer?.invalidate()
+        autoTuckTimer = nil
+        guard mode == .normal, !viewerVisible, !stackHovered,
+              let newestUnread = cards.first(where: { !$0.model.item.seen })?.model.item else { return }
+        let deadline = max(lastExpanded, newestUnread.created).addingTimeInterval(Self.unreadTuckDelay)
+        guard deadline > Date() else {
+            tuck(automatic: true)
+            return
+        }
+        let timer = Timer(fire: deadline, interval: 0, repeats: false) { [weak self] _ in
+            self?.scheduleAutoTuck()
+        }
+        autoTuckTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func peek() {
@@ -526,6 +598,7 @@ final class CardStack {
 
     /// `force` skips the short hover-intent delay (the handle has its own; debug uses it too).
     func pointerEntered(force: Bool = false) {
+        guard !viewerVisible else { return }
         outsideSince = nil
         startPolling()
         guard !stackHovered else { return }
@@ -594,6 +667,7 @@ final class CardStack {
             layout(fresh: [])
         }
         updateControls()
+        scheduleAutoTuck()
     }
 
     private func updateControls() {

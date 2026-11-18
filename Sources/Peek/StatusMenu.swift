@@ -122,7 +122,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         styleRoot.submenu = styles
         menu.addItem(styleRoot)
 
-        let newest = NSMenuItem(title: L10n.tr("打开最新一张", "Open Newest Card"), action: #selector(openNewest), keyEquivalent: "")
+        let newest = NSMenuItem(title: L10n.tr("打开最新卡片", "Open Newest Card"), action: #selector(openNewest), keyEquivalent: "")
         newest.target = self
         Hotkeys.shared.decorate(newest, .open)
         menu.addItem(newest)

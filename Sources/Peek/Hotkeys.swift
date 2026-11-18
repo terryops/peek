@@ -2,7 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 
 /// System-wide shortcuts (Carbon hot keys: no Accessibility permission needed).
-/// Each can be changed or turned off: `defaults write com.terryops.peek hotkeyOpen "ctrl+opt+p"` ("" = off).
+/// Each can be changed or turned off: `defaults write com.terryops.peek hotkeyOpen "opt+cmd+p"` ("" = off).
 final class Hotkeys {
     static let shared = Hotkeys()
 
@@ -25,7 +25,7 @@ final class Hotkeys {
         }
         var fallback: String {
             switch self {
-            case .open: "ctrl+opt+p"
+            case .open: "opt+cmd+p"
             case .tuck: "ctrl+opt+h"
             case .closeAll: "ctrl+opt+x"
             }

@@ -118,7 +118,7 @@ enum SelfTest {
         check(!md.contains("</script><b>"), "Markdown 里的 </script> 被转义")
 
         // Shortcut strings
-        check(Hotkeys.parse("ctrl+opt+p")?.display == "⌃⌥P", "快捷键解析 ctrl+opt+p → ⌃⌥P")
+        check(Hotkeys.parse(Hotkeys.Action.open.fallback)?.display == "⌥⌘P", "打开详情的默认快捷键 ⌥⌘P")
         check(Hotkeys.parse("⌃⌥H")?.display == "⌃⌥H", "快捷键解析 ⌃⌥H")
         check(Hotkeys.parse("cmd+shift+return")?.display == "⇧⌘↩", "快捷键解析 cmd+shift+return")
         check(Hotkeys.parse("") == nil && Hotkeys.parse("p") == nil, "空串 / 没修饰键 = 关掉")

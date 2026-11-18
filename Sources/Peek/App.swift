@@ -138,11 +138,11 @@ final class App: NSObject, NSApplicationDelegate {
     // MARK: actions
 
     /// Opens in Peek's own viewer (never Preview), zooming out of the card.
-    func open(_ id: String, from rect: NSRect? = nil, selectedIndex: Int? = nil) {
+    func open(_ id: String, from rect: NSRect? = nil) {
         guard var item = item(id) else { return }
         guard item.urls.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return }
         if dryRun { log("open \(item.urls.map(\.lastPathComponent))") }
-        Viewer.shared.show(item, from: rect, selectedIndex: selectedIndex)
+        Viewer.shared.show(item, from: rect)
         item.seen = true
         item.lastOpened = Date()
         commit(item)
@@ -161,8 +161,9 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     /// File URLs plus image data, so it pastes into Finder, chat apps and editors alike.
-    func copy(_ id: String, only: Int? = nil) {
-        guard let item = item(id) else { return }
+    @discardableResult
+    func copy(_ id: String, only: Int? = nil) -> Bool {
+        guard let item = item(id), !item.files.isEmpty else { return false }
         let urls = pick(item, only).map { item.urls[$0] }
         let pb = NSPasteboard.general
         pb.clearContents()
@@ -177,8 +178,9 @@ final class App: NSObject, NSApplicationDelegate {
             }
             return p
         }
-        pb.writeObjects(writers)
+        guard pb.writeObjects(writers) else { return false }
         if dryRun { log("copy \(urls.map(\.lastPathComponent))") }
+        return true
     }
 
     /// Back to the conversation that pushed the card: the exact Rex pane, else its terminal app.
@@ -207,9 +209,8 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// ⌃⌥P: the newest card in the viewer; again closes it.
+    /// ⌥⌘P: open the newest card in the viewer.
     func openNewest() {
-        if Viewer.shared.isOpen && Viewer.shared.isKey { Viewer.shared.close(); return }
         let card = cards.cards.first
         guard let id = card?.id ?? items.first?.id else { NSSound.beep(); return }
         open(id, from: card?.shown == true ? card?.panel.frame : nil)

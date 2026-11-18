@@ -88,11 +88,19 @@ enum WebDoc {
 final class WebDocView: WKWebView, WKNavigationDelegate, WKUIDelegate {
     /// Unknown while loading: preserve document scrolling until its layout is known.
     private(set) var hasHorizontalOverflow: Bool?
+    private(set) var hasVerticalOverflow: Bool?
+    private var verticalPaging: (previous: Bool, next: Bool)?
 
     init(url: URL) {
         let cfg = WKWebViewConfiguration()
         cfg.preferences.isElementFullscreenEnabled = true
+        let observer = WebScrollObserver()
+        let world = WKContentWorld.world(name: "PeekScroll")
+        cfg.userContentController.add(observer, contentWorld: world, name: "peekScroll")
+        cfg.userContentController.addUserScript(WKUserScript(source: Self.scrollScript,
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world))
         super.init(frame: .zero, configuration: cfg)
+        observer.view = self
         navigationDelegate = self
         uiDelegate = self
         allowsMagnification = true
@@ -104,31 +112,15 @@ final class WebDocView: WKWebView, WKNavigationDelegate, WKUIDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        refreshHorizontalOverflow()
-    }
-
-    private func refreshHorizontalOverflow() {
-        guard url != nil, !isLoading else { return }
-        evaluateJavaScript("""
-        (() => {
-            const root = document.scrollingElement;
-            if (root && root.scrollWidth > root.clientWidth + 1) return true;
-            return [...document.querySelectorAll('body, body *')].some(el =>
-                /auto|scroll/.test(getComputedStyle(el).overflowX) && el.scrollWidth > el.clientWidth + 1);
-        })()
-        """) { [weak self] result, _ in
-            self?.hasHorizontalOverflow = result as? Bool
-        }
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        refreshHorizontalOverflow()
+    func acceptsVerticalPaging(towardNext: Bool) -> Bool {
+        guard magnification <= 1, let verticalPaging else { return false }
+        return towardNext ? verticalPaging.next : verticalPaging.previous
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         hasHorizontalOverflow = nil
+        hasVerticalOverflow = nil
+        verticalPaging = nil
     }
 
     func zoom(_ action: ZoomImageView.Action) {
@@ -138,7 +130,52 @@ final class WebDocView: WKWebView, WKNavigationDelegate, WKUIDelegate {
         case .zoomIn: pageZoom = min(3, pageZoom * 1.15)
         case .zoomOut: pageZoom = max(0.4, pageZoom / 1.15)
         }
-        refreshHorizontalOverflow()
+    }
+
+    private static let scrollScript = """
+    (() => {
+        const root = document.scrollingElement;
+        if (!root) return;
+        let horizontal = false, nestedVertical = false, last;
+        const publish = () => {
+            const maxY = root.scrollHeight - root.clientHeight;
+            const next = !nestedVertical && root.scrollTop >= maxY - 1;
+            const previous = !nestedVertical && root.scrollTop <= 1;
+            const vertical = nestedVertical || maxY > 1;
+            const state = [horizontal, vertical, previous, next].join(',');
+            if (state !== last) {
+                last = state;
+                window.webkit.messageHandlers.peekScroll.postMessage({horizontal, vertical, previous, next});
+            }
+        };
+        const measure = () => {
+            const elements = [...document.querySelectorAll('body, body *')];
+            const nested = (axis, scroll, client) => elements.some(el =>
+                el !== root && el[scroll] > el[client] + 1 && /auto|scroll/.test(getComputedStyle(el)[axis]));
+            horizontal = root.scrollWidth > root.clientWidth + 1 || nested('overflowX', 'scrollWidth', 'clientWidth');
+            nestedVertical = Boolean(document.querySelector('iframe, frame')) || nested('overflowY', 'scrollHeight', 'clientHeight');
+            publish();
+        };
+        window.addEventListener('scroll', publish, {passive: true});
+        window.addEventListener('resize', measure);
+        window.addEventListener('load', measure, {once: true});
+        const observer = new ResizeObserver(measure);
+        observer.observe(root);
+        if (document.body && document.body !== root) observer.observe(document.body);
+        measure();
+    })()
+    """
+
+    private final class WebScrollObserver: NSObject, WKScriptMessageHandler {
+        weak var view: WebDocView?
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let view, let metrics = message.body as? [String: Bool],
+                  let previous = metrics["previous"], let next = metrics["next"] else { return }
+            view.hasHorizontalOverflow = metrics["horizontal"]
+            view.hasVerticalOverflow = metrics["vertical"]
+            view.verticalPaging = (previous, next)
+        }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,

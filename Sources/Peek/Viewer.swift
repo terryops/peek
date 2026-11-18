@@ -3,6 +3,8 @@ import PDFKit
 import Quartz
 import SwiftUI
 
+enum SwipeOrientation { case horizontal, vertical }
+
 /// Peek's own viewer. Peek is an accessory app, so this never adds a Dock icon,
 /// and closing it hands focus back to whatever you were using before.
 final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
@@ -10,18 +12,24 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     weak var app: App?
 
     private var window: ViewerWindow?
+    private var closeAnimation: UUID?
     private var item: PeekItem?
     private var index = 0
     private var compare = false
     private var main: NSView?
+    private var displayedContent: NSView? { (main as? ViewerDocumentPage)?.document ?? main }
     private let strip = StripModel()
     private var stripHost: NSHostingView<FilmstripView>?
     private let help = HelpModel()
     private var helpHost: NSView?
+    private var copyFeedback: CopyFeedbackView?
+    private var copyFeedbackTimer: Timer?
     private let compareZoom = CompareZoomModel()
     private var swipeOffset: CGFloat = 0
+    private var swipePreview: (index: Int, view: NSView)?
     private var swipeOutgoing: NSView?
     private var swipeAnimationGeneration = 0
+    private static let swipeDuration: TimeInterval = 0.26
     private static let sidebarWidth: CGFloat = 172
     private static let sidebarBreakpoint: CGFloat = 760
 
@@ -46,7 +54,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             "item": item?.displayTitle ?? "",
             "key": win.isKeyWindow,
             "appActive": NSApp.isActive,
-            "content": main.map { String(describing: type(of: $0)) } ?? "-",
+            "content": displayedContent.map { String(describing: type(of: $0)) } ?? "-",
             "magnification": (main as? ZoomImageView)?.magnification ?? 0,
             "swipeOffset": swipeOffset,
             "toolbar": win.toolbar?.items.filter { isToolbarItemVisible($0) }.map(\.label) ?? [],
@@ -55,30 +63,34 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     // MARK: open / close
 
-    func show(_ item: PeekItem, from origin: NSRect?, selectedIndex: Int? = nil) {
+    func show(_ item: PeekItem, from origin: NSRect?) {
         guard !item.files.isEmpty else { return }
+        let wasClosing = closeAnimation != nil
+        closeAnimation = nil
         let reopenSame = isOpen && self.item?.id == item.id
         self.item = item
         let screen = origin.flatMap { r in NSScreen.screens.first { $0.frame.intersects(r) } } ?? NSScreen.main ?? NSScreen.screens[0]
-        if !reopenSame {
-            index = 0
-            compare = false
-        }
-        if let selectedIndex {
-            index = min(max(0, selectedIndex), item.files.count - 1)
-            compare = false
-        }
+        index = 0
+        compare = false
 
         let win = window ?? makeWindow()
         win.resetSwipe()
+        dismissCopyFeedback()
         let target = idealFrame(on: screen)
         reloadContent()
+        app?.cards.setViewerVisible(true)
+        if win.isMiniaturized { win.deminiaturize(nil) }
 
         // A non-activating panel: it takes the keyboard (esc, arrows, ⌘C) while the app
         // you were in stays active, so closing it drops you right back where you were.
         defer { syncToolbar(win.toolbar) }
         if win.isVisible {
-            if !reopenSame { Anim.run(0.32, Anim.outQuint) { win.animator().setFrame(target, display: true) } }
+            if !reopenSame || wasClosing {
+                Anim.run(0.32, Anim.outQuint) {
+                    win.animator().setFrame(target, display: true)
+                    win.animator().alphaValue = 1
+                }
+            }
             win.orderFrontRegardless()
             if takesKey { win.makeKey() }
             return
@@ -95,21 +107,35 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func close() {
-        guard let win = window, win.isVisible else { return }
+        guard let win = window, win.isVisible, closeAnimation == nil else { return }
+        let animation = UUID()
+        closeAnimation = animation
         win.resetSwipe()
+        dismissCopyFeedback()
         let f = win.frame
         Anim.run(0.16, Anim.inCubic, {
             win.animator().alphaValue = 0
             win.animator().setFrame(f.insetBy(dx: f.width * 0.03, dy: f.height * 0.03), display: true)
-        }, done: {
+        }, done: { [weak self] in
+            guard let self, self.closeAnimation == animation else { return }
+            self.closeAnimation = nil
             win.orderOut(nil)
             win.alphaValue = 1
+            self.app?.cards.setViewerVisible(false, viewedCardID: self.item?.id)
         })
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        done()
+        close()
         return false
+    }
+
+    func windowDidMiniaturize(_ notification: Notification) {
+        app?.cards.setViewerVisible(false, viewedCardID: item?.id)
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        app?.cards.setViewerVisible(true)
     }
 
     /// Item changed on disk (deleted / cleaned up): close if it's gone.
@@ -227,15 +253,20 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         stripHost?.frame = sidebar
             ? NSRect(x: 0, y: 0, width: left, height: contentHeight)
             : NSRect(x: 0, y: 0, width: bounds.width, height: bottom)
-        for view in [main, swipeOutgoing].compactMap({ $0 }) {
+        for view in [main, swipePreview?.view, swipeOutgoing].compactMap({ $0 }) {
             let image = view as? ZoomImageView
             view.frame = NSRect(x: left, y: image != nil || compare ? 0 : bottom,
                                 width: max(0, bounds.width - left),
                                 height: image != nil || compare ? bounds.height : max(0, contentHeight - bottom))
             if let image {
-                image.topInset = max(28, bounds.height - contentHeight)
-                image.bottomInset = bottom
+                let top = max(28, bounds.height - contentHeight)
+                if image.topInset != top { image.topInset = top }
+                if image.bottomInset != bottom { image.bottomInset = bottom }
             }
+        }
+        if let feedback = copyFeedback {
+            feedback.setFrameOrigin(NSPoint(x: bounds.maxX - feedback.frame.width - 16,
+                                           y: contentHeight - feedback.frame.height - 12))
         }
     }
 
@@ -244,9 +275,12 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         return host.frame.contains(container.convert(event.locationInWindow, from: nil))
     }
 
+    var hasThumbnailSidebar: Bool { showStrip && strip.sidebar && !help.visible }
+
     // MARK: content
 
-    private func reloadContent(preserving outgoing: NSView? = nil, incomingOffset: CGFloat = 0) {
+    private func reloadContent(preserving outgoing: NSView? = nil, incomingOffset: CGFloat = 0,
+                               orientation: SwipeOrientation = .horizontal, prepared: NSView? = nil) {
         guard let item, let win = window, let container = win.contentView else { return }
         win.cancelSwipeTracking()
         if outgoing == nil {
@@ -260,7 +294,9 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         index = min(index, max(0, item.files.count - 1))
 
         let view: NSView
-        if compare {
+        if let prepared {
+            view = prepared
+        } else if compare {
             compareZoom.reset()
             let images = item.urls.map { NSImage(contentsOf: $0) ?? NSWorkspace.shared.icon(forFile: $0.path) }
             let host = NSHostingView(rootView: CompareView(images: images, names: item.files.map(\.name), zoom: compareZoom,
@@ -270,8 +306,10 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         } else {
             view = Self.makeViewer(for: item.urls[index])
         }
-        if outgoing != nil { positionSwipeView(view, at: incomingOffset) }
-        container.addSubview(view, positioned: .below, relativeTo: outgoing ?? stripHost)
+        if outgoing != nil { positionSwipeView(view, at: incomingOffset, orientation: orientation) }
+        if view.superview !== container {
+            container.addSubview(view, positioned: .below, relativeTo: outgoing ?? stripHost)
+        }
         if help.visible { toggleHelp() }
         main = view
         layoutContent()
@@ -296,8 +334,8 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         syncToolbar(win.toolbar)
     }
 
-    static func makeViewer(for url: URL) -> NSView {
-        if WebDoc.isWeb(url) { return WebDocView(url: url) }
+    private static func makeViewer(for url: URL) -> NSView {
+        if WebDoc.isWeb(url) { return ViewerDocumentPage(WebDocView(url: url)) }
         let ext = url.pathExtension.lowercased()
         if ext == "pdf", let doc = PDFDocument(url: url) {
             let v = PDFView()
@@ -305,7 +343,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             v.autoScales = true
             v.displayMode = .singlePageContinuous
             v.backgroundColor = NSColor(white: 0.075, alpha: 1)
-            return v
+            return ViewerDocumentPage(v)
         }
         if let img = NSImage(contentsOf: url), img.isValid {
             let v = ZoomImageView()
@@ -314,7 +352,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
         guard let ql = QLPreviewView(frame: .zero, style: .normal) else { return NSView() }
         ql.previewItem = url as NSURL
-        return ql
+        return ViewerDocumentPage(ql)
     }
 
     private func select(_ i: Int) {
@@ -333,6 +371,8 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     func cancelSwipeAnimation() {
         swipeAnimationGeneration += 1
+        swipePreview?.view.removeFromSuperview()
+        swipePreview = nil
         swipeOutgoing?.removeFromSuperview()
         swipeOutgoing = nil
         swipeOffset = 0
@@ -342,67 +382,143 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
     }
 
-    func updateSwipe(_ offset: CGFloat) {
-        guard acceptsSwipeNavigation, !Anim.reduceMotion, let main else { return }
-        // Follow small movements directly, with resistance near the window edge.
-        let limit = max(1, main.bounds.width * 0.4)
-        swipeOffset = limit * CGFloat(tanh(Double(offset / limit)))
-        positionSwipeView(main, at: swipeOffset)
+    func updateSwipe(_ offset: CGFloat, orientation: SwipeOrientation = .horizontal) {
+        guard !Anim.reduceMotion, let main else { return }
+        switch orientation {
+        case .horizontal:
+            guard acceptsSwipeNavigation else { return }
+            let limit = max(1, main.bounds.width * 0.4)
+            swipeOffset = limit * CGFloat(tanh(Double(offset / limit)))
+        case .vertical:
+            guard hasThumbnailSidebar else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            defer { CATransaction.commit() }
+            let distance = verticalSwipeDistance
+            swipeOffset = min(distance, max(-distance, offset))
+            if swipeOffset == 0 {
+                swipePreview?.view.removeFromSuperview()
+                swipePreview = nil
+            } else {
+                let direction = swipeOffset > 0 ? 1 : -1
+                previewVerticalNeighbor(direction, at: swipeOffset - CGFloat(direction) * distance)
+            }
+            positionSwipeView(main, at: swipeOffset, orientation: .vertical)
+            return
+        }
+        positionSwipeView(main, at: swipeOffset, orientation: orientation)
     }
 
-    /// Keep selection changes immediate while the outgoing and incoming views slide.
-    func finishSwipe(_ direction: Int?) {
+    private var verticalSwipeDistance: CGFloat {
+        guard let window, let content = window.contentView else { return 1 }
+        return max(1, min(content.bounds.height, window.contentLayoutRect.height))
+    }
+
+    private func previewVerticalNeighbor(_ direction: Int, at offset: CGFloat) {
+        guard let item, let main, let container = main.superview else { return }
+        let neighbor = (index + direction + item.files.count) % item.files.count
+        if let preview = swipePreview, preview.index == neighbor {
+            positionSwipeView(preview.view, at: offset, orientation: .vertical)
+            return
+        }
+        swipePreview?.view.removeFromSuperview()
+        let view = Self.makeViewer(for: item.urls[neighbor])
+        swipePreview = (neighbor, view)
+        container.addSubview(view, positioned: .below, relativeTo: main)
+        layoutContent()
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+        positionSwipeView(view, at: offset, orientation: .vertical)
+    }
+
+    /// Continue from the dragged position, keeping the two visible pages attached at release.
+    func finishSwipe(_ direction: Int?, orientation: SwipeOrientation = .horizontal) {
         guard let outgoing = main else { return }
         let offset = swipeOffset
-        guard let direction, acceptsSwipeNavigation else {
-            swipeOffset = 0
-            if offset != 0 { animateSwipeView(outgoing, from: offset, to: 0) }
+        let preview = swipePreview
+        swipePreview = nil
+        swipeOffset = 0
+        let canNavigate = orientation == .horizontal ? acceptsSwipeNavigation : hasThumbnailSidebar
+        guard let direction, canNavigate else {
+            guard offset != 0 else {
+                preview?.view.removeFromSuperview()
+                return
+            }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            if let preview {
+                let edge = offset > 0 ? -verticalSwipeDistance : verticalSwipeDistance
+                removeSwipeViewAfterAnimation(preview.view)
+                animateSwipeView(preview.view, from: offset + edge, to: edge, orientation: orientation)
+            }
+            animateSwipeView(outgoing, from: offset, to: 0, orientation: orientation)
+            CATransaction.commit()
             return
         }
         guard !Anim.reduceMotion, let container = outgoing.superview else {
+            preview?.view.removeFromSuperview()
             step(direction)
             return
         }
 
         guard let item else { return }
-        let destination = outgoing.bounds.width * (direction > 0 ? -1 : 1)
+        let destination = orientation == .horizontal
+            ? outgoing.bounds.width * CGFloat(-direction)
+            : verticalSwipeDistance * CGFloat(direction)
         // Prepare both views and their animations in one render transaction.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         index = (index + direction + item.files.count) % item.files.count
-        reloadContent(preserving: outgoing, incomingOffset: offset - destination)
+        let prepared = preview?.index == index ? preview?.view : nil
+        if prepared == nil { preview?.view.removeFromSuperview() }
+        reloadContent(preserving: outgoing, incomingOffset: offset - destination, orientation: orientation, prepared: prepared)
         guard let incoming = main, incoming !== outgoing else { return }
         container.layoutSubtreeIfNeeded()
-        positionSwipeView(incoming, at: offset - destination)
         incoming.displayIfNeeded()
-        swipeOutgoing = outgoing
 
+        removeSwipeViewAfterAnimation(outgoing)
+        animateSwipeView(outgoing, from: offset, to: destination, orientation: orientation)
+        animateSwipeView(incoming, from: offset - destination, to: 0, orientation: orientation)
+    }
+
+    private func removeSwipeViewAfterAnimation(_ view: NSView) {
+        swipeOutgoing = view
         let generation = swipeAnimationGeneration
-        CATransaction.setCompletionBlock { [weak self] in
+        let remove = { [weak self] in
             guard let self, self.swipeAnimationGeneration == generation else { return }
             self.swipeOutgoing?.removeFromSuperview()
             self.swipeOutgoing = nil
         }
-        animateSwipeView(outgoing, from: offset, to: destination)
-        animateSwipeView(incoming, from: offset - destination, to: 0)
+        CATransaction.setCompletionBlock(remove)
+        // Non-visible window backing stores can defer the transaction completion.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.swipeDuration + 0.08, execute: remove)
     }
 
-    private func positionSwipeView(_ view: NSView, at offset: CGFloat) {
+    private func positionSwipeView(_ view: NSView, at offset: CGFloat, orientation: SwipeOrientation = .horizontal) {
         view.wantsLayer = true
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        view.layer?.transform = CATransform3DMakeTranslation(offset, 0, 0)
+        let translation = orientation == .horizontal
+            ? CATransform3DMakeTranslation(offset, 0, 0)
+            : CATransform3DMakeTranslation(0, offset, 0)
+        if view is ViewerDocumentPage {
+            view.layer?.sublayerTransform = translation
+        } else {
+            view.layer?.transform = translation
+        }
         CATransaction.commit()
     }
 
-    private func animateSwipeView(_ view: NSView, from start: CGFloat, to end: CGFloat) {
-        positionSwipeView(view, at: end)
+    private func animateSwipeView(_ view: NSView, from start: CGFloat, to end: CGFloat, orientation: SwipeOrientation) {
+        positionSwipeView(view, at: end, orientation: orientation)
         guard !Anim.reduceMotion else { return }
-        let animation = CABasicAnimation(keyPath: "transform.translation.x")
+        let axis = orientation == .horizontal ? "x" : "y"
+        let property = view is ViewerDocumentPage ? "sublayerTransform" : "transform"
+        let animation = CABasicAnimation(keyPath: "\(property).translation.\(axis)")
         animation.fromValue = start
         animation.toValue = end
-        animation.duration = 0.26
+        animation.duration = Self.swipeDuration
         animation.timingFunction = Anim.outQuint
         view.layer?.add(animation, forKey: "viewerSwipe")
     }
@@ -413,11 +529,11 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         if let image = main as? ZoomImageView, let document = image.documentView {
             return document.bounds.width <= image.documentVisibleRect.width + 1
         }
-        if let pdf = main as? PDFView, let scroll = pdf.documentView?.enclosingScrollView,
+        if let pdf = displayedContent as? PDFView, let scroll = pdf.documentView?.enclosingScrollView,
            let document = scroll.documentView {
             return document.bounds.width <= scroll.documentVisibleRect.width + 1
         }
-        if let web = main as? WebDocView {
+        if let web = displayedContent as? WebDocView {
             return web.magnification <= 1 && web.hasHorizontalOverflow == false
         }
         return true
@@ -433,6 +549,21 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         return document.bounds.height <= visibleHeight + 1
     }
 
+    /// A new gesture can page past a document after reaching its matching edge.
+    func acceptsVerticalSwipeNavigation(towardNext: Bool) -> Bool {
+        if let web = displayedContent as? WebDocView {
+            return web.acceptsVerticalPaging(towardNext: towardNext)
+        }
+        if let pdf = displayedContent as? PDFView, let scroll = pdf.documentView?.enclosingScrollView,
+           let document = scroll.documentView {
+            let visible = scroll.documentVisibleRect
+            return towardNext == document.isFlipped
+                ? visible.maxY >= document.bounds.maxY - 1
+                : visible.minY <= document.bounds.minY + 1
+        }
+        return acceptsWheelNavigation
+    }
+
     func zoom(_ action: ZoomImageView.Action) {
         window?.cancelSwipeTracking()
         cancelSwipeAnimation()
@@ -441,7 +572,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             return
         }
         (main as? ZoomImageView)?.perform(action)
-        (main as? WebDocView)?.zoom(action)
+        (displayedContent as? WebDocView)?.zoom(action)
     }
 
     func toggleCompare() {
@@ -451,8 +582,6 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let screen = win.screen ?? NSScreen.main ?? NSScreen.screens[0]
         Anim.run(0.32, Anim.outQuint) { win.animator().setFrame(idealFrame(on: screen), display: true) }
     }
-
-    var isKey: Bool { window?.isKeyWindow ?? false }
 
     func escape() {
         if help.visible { toggleHelp() } else { close() }
@@ -481,16 +610,35 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         app?.reveal(item.id, only: compare ? nil : index)
     }
 
-    /// Close button / ⌘W / ⌘⌫: close the viewer and take the card away.
-    func done() {
+    /// ⌘W / ⌘⌫: close the viewer and take the card away.
+    func dismissCurrentCard() {
         guard let item else { return }
         close()
         app?.dismiss(item.id)
     }
 
     func copyCurrent() {
-        guard let item else { return }
-        app?.copy(item.id, only: compare ? nil : index)
+        guard let item, let win = window, let container = win.contentView else { return }
+        let copied = app?.copy(item.id, only: compare ? nil : index) == true
+        let message = copied ? L10n.tr("已拷贝", "Copied") : L10n.tr("拷贝失败", "Copy Failed")
+        dismissCopyFeedback()
+        let feedback = CopyFeedbackView(rootView: CopyFeedback(message: message, copied: copied))
+        feedback.setFrameSize(feedback.fittingSize)
+        copyFeedback = feedback
+        container.addSubview(feedback, positioned: .above, relativeTo: nil)
+        layoutContent()
+        NSAccessibility.post(element: win, notification: .announcementRequested,
+                             userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        let timer = Timer(timeInterval: 1.6, repeats: false) { [weak self] _ in self?.dismissCopyFeedback() }
+        copyFeedbackTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func dismissCopyFeedback() {
+        copyFeedbackTimer?.invalidate()
+        copyFeedbackTimer = nil
+        copyFeedback?.removeFromSuperview()
+        copyFeedback = nil
     }
 
     // MARK: toolbar
@@ -642,10 +790,16 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 final class ViewerWindow: NSPanel {
     weak var viewer: Viewer?
 
-    private enum SwipeAxis { case undecided, horizontal, vertical, discarded }
+    private enum SwipeAxis {
+        case undecided, horizontal, vertical, scrolling, discarded
+
+        var consumesScroll: Bool { self == .horizontal || self == .vertical || self == .discarded }
+    }
     private var swipeAxis = SwipeAxis.undecided
     private var swipeX: CGFloat = 0
     private var swipeY: CGFloat = 0
+    private var allowsHorizontalSwipe = false
+    private var allowsVerticalSwipe = false
     private var trackingSwipe = false
     private var undecidedScrollEvents: [NSEvent] = []
     private var lastWheelNavigation: (time: TimeInterval, direction: Int)?
@@ -673,10 +827,13 @@ final class ViewerWindow: NSPanel {
     // Intercept before NSScrollView, PDFKit or WebKit consumes the scroll event.
     override func sendEvent(_ event: NSEvent) {
         // WebKit and SwiftUI can otherwise consume arrows before the window sees them.
-        if event.type == .keyDown, [123, 124, 125, 126].contains(event.keyCode),
-           event.modifierFlags.intersection([.command, .control]).isEmpty {
-            keyDown(with: event)
-            return
+        if event.type == .keyDown {
+            if handleCloseShortcut(event) { return }
+            if [123, 124, 125, 126].contains(event.keyCode),
+               event.modifierFlags.intersection([.command, .control]).isEmpty {
+                keyDown(with: event)
+                return
+            }
         }
         if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .magnify {
             cancelSwipeTracking()
@@ -684,6 +841,20 @@ final class ViewerWindow: NSPanel {
         }
         if event.type == .scrollWheel, handleWheel(event) || handleSwipe(event) { return }
         super.sendEvent(event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        handleCloseShortcut(event) || super.performKeyEquivalent(with: event)
+    }
+
+    private func handleCloseShortcut(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown,
+              event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command,
+              let viewer else { return false }
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        guard key == "w" || (key.isEmpty && event.keyCode == 13) else { return false }
+        viewer.dismissCurrentCard()
+        return true
     }
 
     private func handleWheel(_ event: NSEvent) -> Bool {
@@ -698,7 +869,7 @@ final class ViewerWindow: NSPanel {
            event.timestamp - last.time < 0.2 { return true }
         cancelSwipeTracking()
         viewer.cancelSwipeAnimation()
-        viewer.finishSwipe(direction)
+        viewer.finishSwipe(direction, orientation: viewer.hasThumbnailSidebar ? .vertical : .horizontal)
         lastWheelNavigation = (event.timestamp, direction)
         return true
     }
@@ -706,20 +877,31 @@ final class ViewerWindow: NSPanel {
     private func handleSwipe(_ event: NSEvent) -> Bool {
         guard event.hasPreciseScrollingDeltas else { return false }
         // Momentum belongs to the gesture that just ended, never to a new file.
-        if !event.momentumPhase.isEmpty { return swipeAxis == .horizontal || swipeAxis == .discarded }
+        if !event.momentumPhase.isEmpty { return swipeAxis.consumesScroll }
         if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
             // Resting fingers can emit mayBegin while the release animation runs.
             resetSwipe(cancelAnimation: event.phase.contains(.began))
-            trackingSwipe = (viewer?.acceptsSwipeNavigation ?? false) && !(viewer?.isOverNavigation(event) ?? false)
+            guard let viewer else { return false }
+            let overNavigation = viewer.isOverNavigation(event)
+            allowsHorizontalSwipe = !overNavigation && viewer.acceptsSwipeNavigation
+            allowsVerticalSwipe = !overNavigation && viewer.hasThumbnailSidebar
+                && event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+            trackingSwipe = allowsHorizontalSwipe || allowsVerticalSwipe
         }
         guard !event.phase.isEmpty else { return false }
-        guard trackingSwipe else { return swipeAxis == .horizontal || swipeAxis == .discarded }
+        guard trackingSwipe else { return swipeAxis.consumesScroll }
 
-        let fingerX = event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX
-        swipeX += fingerX
-        swipeY += event.scrollingDeltaY
+        let fingerDirection: CGFloat = event.isDirectionInvertedFromDevice ? 1 : -1
+        swipeX += event.scrollingDeltaX * fingerDirection
+        // A positive non-natural vertical scroll delta corresponds to an upward finger swipe.
+        swipeY -= event.scrollingDeltaY * fingerDirection
         if swipeAxis == .undecided, max(abs(swipeX), abs(swipeY)) >= 8 {
-            swipeAxis = abs(swipeX) > abs(swipeY) * 1.2 ? .horizontal : .vertical
+            if abs(swipeX) > abs(swipeY) * 1.2 {
+                swipeAxis = allowsHorizontalSwipe ? .horizontal : .scrolling
+            } else {
+                let canPage = allowsVerticalSwipe && viewer?.acceptsVerticalSwipeNavigation(towardNext: swipeY > 0) == true
+                swipeAxis = canPage ? .vertical : .scrolling
+            }
         }
 
         let finished = event.phase.contains(.ended) || event.phase.contains(.cancelled)
@@ -733,29 +915,32 @@ final class ViewerWindow: NSPanel {
             return true
         }
         // A child receives either a complete scroll stream or none of it.
-        if swipeAxis == .vertical { undecidedScrollEvents.forEach { super.sendEvent($0) } }
+        if swipeAxis == .scrolling { undecidedScrollEvents.forEach { super.sendEvent($0) } }
         undecidedScrollEvents.removeAll()
-        let consumed = swipeAxis == .horizontal
-        if consumed { viewer?.updateSwipe(swipeX) }
+        if swipeAxis == .horizontal { viewer?.updateSwipe(swipeX) }
+        if swipeAxis == .vertical { viewer?.updateSwipe(swipeY, orientation: .vertical) }
         if finished {
             trackingSwipe = false
-            if consumed {
-                let commit = !event.phase.contains(.cancelled) && abs(swipeX) >= 64
-                viewer?.finishSwipe(commit ? (swipeX < 0 ? 1 : -1) : nil)
+            let released = !event.phase.contains(.cancelled)
+            if swipeAxis == .horizontal {
+                viewer?.finishSwipe(released && abs(swipeX) >= 64 ? (swipeX < 0 ? 1 : -1) : nil)
+            } else if swipeAxis == .vertical {
+                viewer?.finishSwipe(released && abs(swipeY) >= 64 ? (swipeY > 0 ? 1 : -1) : nil,
+                                    orientation: .vertical)
             }
         }
-        return consumed
+        return swipeAxis.consumesScroll
     }
 
     override func keyDown(with e: NSEvent) {
         guard let v = viewer else { return super.keyDown(with: e) }
+        if handleCloseShortcut(e) { return }
         let m = e.modifierFlags.intersection([.command, .option, .control, .shift])
         let cmd = m == .command
         let plain = m.isEmpty || m == .shift
         switch e.keyCode {
         case 53: v.escape()                                         // esc
         case 49 where plain: v.close()                             // space
-        case 13 where cmd: v.done()                                // ⌘W
         case 123 where plain: v.step(-1)                            // ←
         case 124 where plain: v.step(1)                             // →
         case 126 where plain: v.stepVertical(-1)                    // ↑ previous file
@@ -766,7 +951,7 @@ final class ViewerWindow: NSPanel {
         case 8 where cmd: v.copyCurrent()                           // ⌘C
         case 15 where cmd: v.revealCurrent()                        // ⌘R
         case 2 where cmd: v.toggleCompare()                         // ⌘D
-        case 51 where cmd: v.done()                                 // ⌘⌫
+        case 51 where cmd: v.dismissCurrentCard()                   // ⌘⌫
         case 29 where cmd: v.zoom(.fit)                             // ⌘0
         case 18 where cmd: v.zoom(.actual)                          // ⌘1
         case 24 where cmd: v.zoom(.zoomIn)                          // ⌘=
@@ -786,6 +971,42 @@ private final class ViewerContentView: NSView {
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         onResize?()
+    }
+}
+
+/// Keep the transition on the host layer while PDFKit and WebKit lay out their content.
+final class ViewerDocumentPage: NSView {
+    let document: NSView
+
+    init(_ document: NSView) {
+        self.document = document
+        super.init(frame: .zero)
+        wantsLayer = true
+        document.frame = bounds
+        document.autoresizingMask = [.width, .height]
+        addSubview(document)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+private final class CopyFeedbackView: NSHostingView<CopyFeedback> {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+private struct CopyFeedback: View {
+    var message: String
+    var copied: Bool
+
+    var body: some View {
+        Label(message, systemImage: copied ? "checkmark" : "exclamationmark.circle")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.15), lineWidth: 1))
+            .fixedSize()
     }
 }
 
@@ -1127,7 +1348,7 @@ struct ShortcutSheet: View {
 
     private var viewer: [(String, String)] {
         [
-            ("⎋  Space", L10n.tr("关闭", "Close")),
+            ("⎋  Space", L10n.tr("关闭查看器", "Close viewer")),
             ("←  →", L10n.tr("切换这张卡里的文件", "Previous / next file")),
             (L10n.tr("双指左右滑", "Swipe ↔"), L10n.tr("上一张 / 下一张文件", "Previous / next file")),
             (L10n.tr("滚轮上下", "Scroll ↕"), L10n.tr("上一张 / 下一张图片", "Previous / next image")),
@@ -1145,7 +1366,7 @@ struct ShortcutSheet: View {
 
     private var global: [(String, String)] {
         let names: [(Hotkeys.Action, String)] = [
-            (.open, L10n.tr("打开最新一张", "Open newest card")),
+            (.open, L10n.tr("打开最新卡片", "Open newest card")),
             (.tuck, L10n.tr("暂时收起 / 恢复", "Tuck aside / restore")),
             (.closeAll, L10n.tr("全部关闭", "Close all")),
         ]
