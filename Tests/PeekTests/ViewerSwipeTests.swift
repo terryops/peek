@@ -329,14 +329,21 @@ struct ViewerSwipeTests {
         try await withViewer { viewer, window in
             scroll(window, x: 0, phase: .began)
             scroll(window, x: -100, phase: .changed)
-            let click = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero,
-                                                       modifierFlags: [], timestamp: 0,
-                                                       windowNumber: window.windowNumber, context: nil,
-                                                       eventNumber: 0, clickCount: 1, pressure: 1))
-            window.sendEvent(click)
+            let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
+            let point = image.convert(NSPoint(x: image.bounds.midX, y: image.bounds.midY), to: nil)
+            // AppKit can synchronously track a mouse-down until it receives the mouse-up.
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+                NSApp.postEvent(event, atStart: false)
+            }
+            while let event = NSApp.nextEvent(matching: [.leftMouseDown, .leftMouseUp], until: .distantPast,
+                                              inMode: .default, dequeue: true) {
+                NSApp.sendEvent(event)
+            }
             scroll(window, x: 0, phase: .ended)
             #expect(viewer.snapshot()["index"] as? Int == 0)
-            let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
             #expect(image.layer?.transform.m41 ?? 0 == 0)
         }
     }
