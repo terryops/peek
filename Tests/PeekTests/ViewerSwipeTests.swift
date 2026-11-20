@@ -661,6 +661,9 @@ struct ViewerSwipeTests {
         cg.setIntegerValueField(.scrollWheelEventMomentumPhase, value: Int64(cgMomentum.rawValue))
         let event = NSEvent(cgEvent: cg)!
         precondition(event.phase == phase && event.momentumPhase == momentum)
+        // Direct event delivery bypasses AppKit's display pass between user gestures.
+        window.displayIfNeeded()
+        CATransaction.flush()
         window.sendEvent(event)
     }
 }
