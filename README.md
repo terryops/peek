@@ -4,7 +4,7 @@ English · [简体中文](README.zh-CN.md) · [Manual Usage & Shortcuts](docs/ma
 
 Native macOS floating preview cards for AI Agents (Claude Code, Codex, Cursor, Windsurf, OpenClaw, etc.). Instead of popping up Preview or a browser and stealing your keyboard focus—or leaving bare file paths in chat—agents push **images, PDFs, Markdown, and HTML** to non-activating cards in the top-right corner of your screen. Click a card when you are ready to inspect it, press `Esc` to return right where you were typing, or press `↩` to jump straight back to the agent session that sent it.
 
-[**Download Universal Mac App**](https://github.com/terryops/peek/releases/latest) · macOS 14+ (Apple Silicon & Intel) · Signed & Notarized · [MIT License](LICENSE)
+[**Download for Apple Silicon**](https://github.com/terryops/peek/releases/latest) · macOS 14+ · Signed & Notarized · [Intel download (v1.3.0)](https://github.com/terryops/peek/releases/tag/v1.3.0) · [MIT License](LICENSE)
 
 <p align="center">
   <img src="docs/screenshots/demo.gif" alt="Peek demo: an AI agent pushes files to a top-right floating card without stealing focus from the chat window, opens side-by-side comparison on click, and returns focus on Esc" width="840">
@@ -14,7 +14,7 @@ Native macOS floating preview cards for AI Agents (Claude Code, Codex, Cursor, W
 
 ### On your Mac
 
-1. Download `Peek-universal.zip` from [GitHub Releases](https://github.com/terryops/peek/releases/latest), move `Peek.app` into `/Applications`, and open it.
+1. On an Apple Silicon Mac, download `Peek-arm64.zip` from [GitHub Releases](https://github.com/terryops/peek/releases/latest), unzip it, move `Peek.app` into `/Applications`, and open it.
 2. Click the Peek menu bar icon → **Install 'peek' Command** (and optionally enable **Launch at Login**), or link `~/.local`/`~/bin` manually:
 
 ```sh

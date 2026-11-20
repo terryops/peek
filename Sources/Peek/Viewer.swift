@@ -12,6 +12,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     weak var app: App?
 
     private var window: ViewerWindow?
+    private var previousApplication: NSRunningApplication?
     private var closeAnimation: UUID?
     private var item: PeekItem?
     private var index = 0
@@ -65,6 +66,10 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     func show(_ item: PeekItem, from origin: NSRect?) {
         guard !item.files.isEmpty else { return }
+        if takesKey, let front = NSWorkspace.shared.frontmostApplication,
+           front.processIdentifier != NSRunningApplication.current.processIdentifier {
+            previousApplication = front
+        }
         let wasClosing = closeAnimation != nil
         closeAnimation = nil
         let reopenSame = isOpen && self.item?.id == item.id
@@ -81,29 +86,27 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         app?.cards.setViewerVisible(true)
         if win.isMiniaturized { win.deminiaturize(nil) }
 
-        // A non-activating panel: it takes the keyboard (esc, arrows, ⌘C) while the app
-        // you were in stays active, so closing it drops you right back where you were.
-        defer { syncToolbar(win.toolbar) }
-        if win.isVisible {
-            if !reopenSame || wasClosing {
-                Anim.run(0.32, Anim.outQuint) {
-                    win.animator().setFrame(target, display: true)
-                    win.animator().alphaValue = 1
-                }
-            }
+        let alreadyVisible = win.isVisible
+        if !alreadyVisible {
+            let start = origin ?? target.insetBy(dx: target.width * 0.06, dy: target.height * 0.06)
+            win.setFrame(start, display: false)
+            win.alphaValue = 0
+        }
+        if takesKey {
+            // WindowServer routes trackpad magnify gestures to the active application.
+            NSApp.activate()
+            win.makeKeyAndOrderFront(nil)
+        } else {
             win.orderFrontRegardless()
-            if takesKey { win.makeKey() }
-            return
         }
-        let start = origin ?? target.insetBy(dx: target.width * 0.06, dy: target.height * 0.06)
-        win.setFrame(start, display: false)
-        win.alphaValue = 0
-        win.orderFrontRegardless()
-        if takesKey { win.makeKey() }
-        Anim.run(Anim.reduceMotion ? 0.15 : 0.34, Anim.outExpo) {
-            win.animator().setFrame(target, display: true)
-            win.animator().alphaValue = 1
+        if !alreadyVisible || !reopenSame || wasClosing {
+            let duration = alreadyVisible ? 0.32 : (Anim.reduceMotion ? 0.15 : 0.34)
+            Anim.run(duration, alreadyVisible ? Anim.outQuint : Anim.outExpo) {
+                win.animator().setFrame(target, display: true)
+                win.animator().alphaValue = 1
+            }
         }
+        syncToolbar(win.toolbar)
     }
 
     func close() {
@@ -119,9 +122,15 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }, done: { [weak self] in
             guard let self, self.closeAnimation == animation else { return }
             self.closeAnimation = nil
+            let returnTo = win.isKeyWindow && NSApp.isActive ? self.previousApplication : nil
+            self.previousApplication = nil
             win.orderOut(nil)
             win.alphaValue = 1
             self.app?.cards.setViewerVisible(false, viewedCardID: self.item?.id)
+            if let returnTo, !returnTo.isTerminated, NSApp.keyWindow == nil {
+                NSApp.yieldActivation(to: returnTo)
+                returnTo.activate(from: .current, options: [])
+            }
         })
     }
 
@@ -152,7 +161,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     private func makeWindow() -> ViewerWindow {
         let win = ViewerWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
-                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView, .nonactivatingPanel],
+                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                backing: .buffered, defer: false)
         win.isFloatingPanel = false
         win.hidesOnDeactivate = false
@@ -240,7 +249,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         layoutContent()
     }
 
-    /// The sidebar and detail share a boundary; documents never run beneath navigation.
+    /// Give scrolling content its own viewport between the toolbar and navigation.
     private func layoutContent() {
         guard let win = window, let container = win.contentView else { return }
         let bounds = container.bounds
@@ -253,16 +262,10 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         stripHost?.frame = sidebar
             ? NSRect(x: 0, y: 0, width: left, height: contentHeight)
             : NSRect(x: 0, y: 0, width: bounds.width, height: bottom)
+        let viewport = NSRect(x: left, y: bottom, width: max(0, bounds.width - left),
+                              height: max(0, contentHeight - bottom))
         for view in [main, swipePreview?.view, swipeOutgoing].compactMap({ $0 }) {
-            let image = view as? ZoomImageView
-            view.frame = NSRect(x: left, y: image != nil || compare ? 0 : bottom,
-                                width: max(0, bounds.width - left),
-                                height: image != nil || compare ? bounds.height : max(0, contentHeight - bottom))
-            if let image {
-                let top = max(28, bounds.height - contentHeight)
-                if image.topInset != top { image.topInset = top }
-                if image.bottomInset != bottom { image.bottomInset = bottom }
-            }
+            view.frame = viewport
         }
         if let feedback = copyFeedback {
             feedback.setFrameOrigin(NSPoint(x: bounds.maxX - feedback.frame.width - 16,
@@ -543,10 +546,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     var acceptsWheelNavigation: Bool {
         guard acceptsSwipeNavigation, let image = main as? ZoomImageView,
               let document = image.documentView else { return false }
-        let insets = image.contentInsets
-        let visibleHeight = image.documentVisibleRect.height
-            - (insets.top + insets.bottom) / max(image.magnification, 0.0001)
-        return document.bounds.height <= visibleHeight + 1
+        return document.bounds.height <= image.documentVisibleRect.height + 1
     }
 
     /// A new gesture can page past a document after reaching its matching edge.
@@ -782,6 +782,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Close the viewer and go back to the conversation; the card stays (read) for a while.
     func jumpBack() {
         guard let item else { return }
+        if item.origin?.canJump == true { previousApplication = nil }
         close()
         app?.jump(item.id)
     }
@@ -835,7 +836,7 @@ final class ViewerWindow: NSPanel {
                 return
             }
         }
-        if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .magnify {
+        if [.leftMouseDown, .rightMouseDown, .magnify, .smartMagnify].contains(event.type) {
             cancelSwipeTracking()
             viewer?.cancelSwipeAnimation()
         }
@@ -1019,14 +1020,6 @@ final class ZoomImageView: NSScrollView {
     private let imageView = NSImageView()
     private var natural = NSSize.zero
     private var fitting = true
-    /// Toolbar above, filmstrip below: the image fits and centers between them.
-    var topInset: CGFloat = 52 { didSet { applyInsets() } }
-    var bottomInset: CGFloat = 0 { didSet { applyInsets() } }
-
-    private func applyInsets() {
-        contentInsets = NSEdgeInsets(top: topInset, left: 0, bottom: bottomInset, right: 0)
-        if fitting { fit() }
-    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -1040,14 +1033,13 @@ final class ZoomImageView: NSScrollView {
         minMagnification = 0.05
         maxMagnification = 16
         automaticallyAdjustsContentInsets = false
-        contentInsets = NSEdgeInsets(top: topInset, left: 0, bottom: 0, right: 0)
         imageView.imageScaling = .scaleAxesIndependently
         imageView.animates = true
         imageView.wantsLayer = true
         imageView.layer?.magnificationFilter = .nearest
         documentView = imageView
-        NotificationCenter.default.addObserver(self, selector: #selector(magnified),
-                                               name: NSScrollView.didEndLiveMagnifyNotification, object: self)
+        NotificationCenter.default.addObserver(self, selector: #selector(willMagnify),
+                                               name: NSScrollView.willStartLiveMagnifyNotification, object: self)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -1064,9 +1056,8 @@ final class ZoomImageView: NSScrollView {
     }
 
     private var fitScale: CGFloat {
-        let insets = contentInsets
-        let w = bounds.width - insets.left - insets.right - 32
-        let h = bounds.height - insets.top - insets.bottom - 24
+        let w = bounds.width - 32
+        let h = bounds.height - 24
         guard natural.width > 0, natural.height > 0, w > 0, h > 0 else { return 1 }
         return min(1, w / natural.width, h / natural.height)
     }
@@ -1082,7 +1073,8 @@ final class ZoomImageView: NSScrollView {
         }
     }
 
-    @objc private func magnified() { fitting = abs(magnification - fitScale) < 0.01 }
+    // AppKit can lay out the scroll view between updates of the same pinch.
+    @objc private func willMagnify() { fitting = false }
 
     override func layout() {
         super.layout()
@@ -1091,19 +1083,28 @@ final class ZoomImageView: NSScrollView {
 
     override func mouseDown(with e: NSEvent) {
         if e.clickCount == 2 {
-            let point = imageView.convert(e.locationInWindow, from: nil)
-            if fitting || magnification < 0.99 {
-                fitting = false
-                NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = 0.25
-                    animator().setMagnification(1, centeredAt: point)
-                }
-            } else {
-                perform(.fit)
-            }
-            return
+            toggleZoom(to: 1, at: e.locationInWindow)
+        } else {
+            super.mouseDown(with: e)
         }
-        super.mouseDown(with: e)
+    }
+
+    override func smartMagnify(with event: NSEvent) {
+        // A small image may already be at 1:1 when fitted.
+        toggleZoom(to: fitScale < 1 ? 1 : 2, at: event.locationInWindow)
+    }
+
+    private func toggleZoom(to scale: CGFloat, at location: NSPoint) {
+        if fitting || magnification < scale - 0.01 {
+            fitting = false
+            let point = contentView.convert(location, from: nil)
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.25
+                animator().setMagnification(scale, centeredAt: point)
+            }
+        } else {
+            perform(.fit)
+        }
     }
 }
 
@@ -1111,13 +1112,9 @@ final class ZoomImageView: NSScrollView {
 final class CenteringClipView: NSClipView {
     override func constrainBoundsRect(_ proposed: NSRect) -> NSRect {
         var r = super.constrainBoundsRect(proposed)
-        guard let doc = documentView, let scroll = superview as? NSScrollView else { return r }
-        // Insets are in view points; bounds are in document units (scaled by magnification).
-        let m = max(scroll.magnification, 0.0001)
-        let top = scroll.contentInsets.top / m, bottom = scroll.contentInsets.bottom / m
-        let visibleH = r.height - top - bottom
+        guard let doc = documentView else { return r }
         if r.width > doc.frame.width { r.origin.x = (doc.frame.width - r.width) / 2 }
-        if visibleH > doc.frame.height { r.origin.y = (doc.frame.height - r.height + top - bottom) / 2 }
+        if r.height > doc.frame.height { r.origin.y = (doc.frame.height - r.height) / 2 }
         return r
     }
 }
@@ -1289,7 +1286,7 @@ struct CompareView: View {
     var body: some View {
         GeometryReader { geo in
             let baseW = max(1, geo.size.width - 32)
-            let baseH = max(1, geo.size.height - 76)
+            let baseH = max(1, geo.size.height - 32)
             let s = zoom.effectiveScale
             ScrollView([.horizontal, .vertical], showsIndicators: s > 1.01) {
                 HStack(spacing: 16) {
@@ -1319,10 +1316,8 @@ struct CompareView: View {
                         .accessibilityLabel(i < names.count ? names[i] : "\(i + 1)")
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 60)
-                .padding(.bottom, 16)
-                .frame(width: baseW * s + 32, height: baseH * s + 76)
+                .padding(16)
+                .frame(width: baseW * s + 32, height: baseH * s + 32)
             }
             .gesture(
                 MagnificationGesture()

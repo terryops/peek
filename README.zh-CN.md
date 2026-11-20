@@ -4,7 +4,7 @@
 
 专为 AI Agent（Claude Code、Codex、Cursor、Windsurf、OpenClaw 等）设计的原生 macOS 浮动预览卡片。Agent 生成的**图片、PDF、Markdown 和 HTML** 不再弹起 Preview 或浏览器抢走你的键盘焦点，也不用去聊天记录里翻裸路径，而是安静推到屏幕右上角的不抢焦点卡片——想看时点击卡片在内置查看器中打开，按 `Esc` 立即回到原窗口继续输入，按 `↩` 直接切回发出这张卡片的对话。
 
-[**下载 Mac 通用版**](https://github.com/terryops/peek/releases/latest) · macOS 14+（Apple Silicon / Intel）· 已签名与公证 · [MIT License](LICENSE)
+[**下载 Apple Silicon 版**](https://github.com/terryops/peek/releases/latest) · macOS 14+ · 已签名与公证 · [Intel 版下载（v1.3.0）](https://github.com/terryops/peek/releases/tag/v1.3.0) · [MIT License](LICENSE)
 
 <p align="center">
   <img src="docs/screenshots/demo.gif" alt="Peek 演示：AI Agent 不抢对话焦点推送右上角浮动卡片，点击并排对比，按 Esc 直接回到聊天框继续输入" width="840">
@@ -14,7 +14,7 @@
 
 ### 在本机 Mac 上
 
-1. 从 [GitHub Releases](https://github.com/terryops/peek/releases/latest) 下载 `Peek-universal.zip`，解压后将 `Peek.app` 拖入「应用程序」并打开。
+1. 在 Apple Silicon Mac 上，从 [GitHub Releases](https://github.com/terryops/peek/releases/latest) 下载 `Peek-arm64.zip`，解压后将 `Peek.app` 拖入「应用程序」并打开。
 2. 点击菜单栏 Peek 图标 →「安装 peek 命令」（并可勾选「登录时打开」），或在终端手动创建软链接：
 
 ```sh

@@ -35,5 +35,7 @@ jobs:
           cache-dependency-path: Remote/go.mod
       - name: Run Swift Test Suite
         run: ./Scripts/test.sh
-      - name: Build Universal Peek.app & Self-Test
-        run: PEEK_UNIVERSAL=1 ./Scripts/build.sh
+      - name: Build Apple Silicon Peek.app & Self-Test
+        run: |
+          ./Scripts/build.sh
+          test "$(lipo -archs build/Peek.app/Contents/MacOS/Peek)" = arm64

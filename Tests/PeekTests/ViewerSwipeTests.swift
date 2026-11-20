@@ -81,6 +81,59 @@ struct ViewerSwipeTests {
         }
     }
 
+    @Test func zoomedPortraitStaysBetweenToolbarAndNavigation() async throws {
+        for fileCount in [1, 2] {
+            try await withViewer(fileCount: fileCount, imageHeight: 6400) { viewer, window in
+                let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
+                viewer.zoom(.actual)
+                try await Task.sleep(for: .milliseconds(400))
+                for width: CGFloat in [900, 560] {
+                    var frame = window.frame
+                    frame.size.width = width
+                    window.setFrame(frame, display: true)
+                    window.contentView?.layoutSubtreeIfNeeded()
+                    let viewport = image.convert(image.bounds, to: nil)
+                    #expect(viewport.maxY == window.contentLayoutRect.maxY)
+                    #expect(viewport.minY == (fileCount > 1 && width < 760 ? 84 : 0))
+                    #expect(image.magnification == 1)
+                    #expect(!viewer.acceptsWheelNavigation)
+                }
+            }
+        }
+    }
+
+    @Test func floatingCardStaysPassiveWhileViewerCanActivateForPinch() async throws {
+        try await withViewer(fileCount: 1) { _, window in
+            let card = CardPanel(size: NSSize(width: 340, height: 80))
+            #expect(card.styleMask.contains(.nonactivatingPanel))
+            #expect(!card.canBecomeKey)
+            #expect(!window.styleMask.contains(.nonactivatingPanel))
+            #expect(window.canBecomeKey)
+        }
+    }
+
+    @Test func layoutPreservesPinchUntilFitIsRequested() async throws {
+        try await withViewer(fileCount: 1, imageHeight: 6400) { viewer, window in
+            let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
+            let fitted = image.magnification
+            let pinched = fitted * 2
+            NotificationCenter.default.post(name: NSScrollView.willStartLiveMagnifyNotification, object: image)
+            image.magnification = pinched
+            image.needsLayout = true
+            image.layoutSubtreeIfNeeded()
+            #expect(abs(image.magnification - pinched) < 0.001)
+            NotificationCenter.default.post(name: NSScrollView.didEndLiveMagnifyNotification, object: image)
+            var frame = window.frame
+            frame.size.height -= 100
+            window.setFrame(frame, display: true)
+            window.contentView?.layoutSubtreeIfNeeded()
+            #expect(abs(image.magnification - pinched) < 0.001)
+            viewer.zoom(.fit)
+            try await Task.sleep(for: .milliseconds(400))
+            #expect(image.magnification < fitted)
+        }
+    }
+
     @Test func comparisonIncludesImagesAfterTheFourth() async throws {
         try await withViewer(fileCount: 5) { viewer, window in
             for _ in 0..<50 {
@@ -175,8 +228,7 @@ struct ViewerSwipeTests {
             let document = try #require(image.documentView)
             // Fit the width while overflowing vertically on both 1x and 2x screens.
             let horizontalFit = image.contentView.bounds.width * image.magnification / document.bounds.width
-            let verticalFit = (image.contentView.bounds.height * image.magnification
-                - image.contentInsets.top - image.contentInsets.bottom) / document.bounds.height
+            let verticalFit = image.contentView.bounds.height * image.magnification / document.bounds.height
             image.magnification = (horizontalFit + verticalFit) / 2
             image.layoutSubtreeIfNeeded()
             #expect(viewer.acceptsSwipeNavigation)
@@ -517,6 +569,7 @@ struct ViewerSwipeTests {
     private var tallDocument: String { String(repeating: "A paragraph to scroll through.\n\n", count: 80) }
 
     private func withViewer(fileCount: Int = 3, document: Bool = false, overflow: Bool = false, text: String = "# Test\n\nDocument",
+                            imageHeight: Int = 1000,
                             allowComparison: Bool = false, on targetScreen: NSScreen? = nil,
                             _ body: (Viewer, ViewerWindow) async throws -> Void) async throws {
         _ = NSApplication.shared
@@ -526,7 +579,7 @@ struct ViewerSwipeTests {
         let folder = item.dir.appendingPathComponent("files")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: item.dir) }
-        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1600, pixelsHigh: 1000,
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1600, pixelsHigh: imageHeight,
                                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                                   isPlanar: false, colorSpaceName: .deviceRGB,
                                                   bytesPerRow: 0, bitsPerPixel: 0))
@@ -542,9 +595,11 @@ struct ViewerSwipeTests {
         let window = try #require(NSApp.windows.compactMap { $0 as? ViewerWindow }.first { $0.viewer === viewer })
         // AppKit's layer-backed scroll monitor needs a real screen. Keep the window
         // behind the user's apps rather than moving it offscreen (screen == nil).
+        window.orderBack(nil)
+        // The opening animation also sets the frame. Let it finish before resizing the fixture.
+        try await Task.sleep(for: .milliseconds(400))
         window.setFrame(NSRect(x: screen.visibleFrame.minX + 20, y: screen.visibleFrame.minY + 20,
                                width: 900, height: 640), display: false)
-        window.orderBack(nil)
         window.contentView?.layoutSubtreeIfNeeded()
         defer { window.delegate = nil; window.close() }
         if document { try await waitForDocument(window) }
