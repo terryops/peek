@@ -331,16 +331,13 @@ struct ViewerSwipeTests {
             scroll(window, x: -100, phase: .changed)
             let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
             let point = image.convert(NSPoint(x: image.bounds.midX, y: image.bounds.midY), to: nil)
-            // AppKit can synchronously track a mouse-down until it receives the mouse-up.
+            // Keep AppKit from starting a native window drag in this synthetic click.
+            window.isMovable = false
             for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                 let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
                     timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                     context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
-                NSApp.postEvent(event, atStart: false)
-            }
-            while let event = NSApp.nextEvent(matching: [.leftMouseDown, .leftMouseUp], until: .distantPast,
-                                              inMode: .default, dequeue: true) {
-                NSApp.sendEvent(event)
+                window.sendEvent(event)
             }
             scroll(window, x: 0, phase: .ended)
             #expect(viewer.snapshot()["index"] as? Int == 0)
