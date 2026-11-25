@@ -90,7 +90,9 @@ struct FloatingCardTests {
 
         app.cards.sync([second, first])
         let delivered = try #require(app.cards.cards.first)
-        try await Task.sleep(for: .milliseconds(650))
+        try await waitForPanelAnimation {
+            delivered.panel.alphaValue == 1 && delivered.panel.frame == delivered.targetFrame
+        }
         let screen = try #require(delivered.panel.screen)
         #expect(delivered.id == second.id)
         #expect(delivered.panel.isVisible)
@@ -99,4 +101,13 @@ struct FloatingCardTests {
         #expect(delivered.panel.frame.maxY == screen.visibleFrame.maxY - CardMetrics.top)
         #expect(!delivered.panel.isKeyWindow)
     }
+}
+
+@MainActor
+func waitForPanelAnimation(_ finished: () -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !finished(), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    try #require(finished())
 }

@@ -110,13 +110,12 @@ struct RecentPanelTests {
         #expect(detail.isVisible && panel.isVisible)
         detail.makeFirstResponder(detail)
         try press(53, in: detail)
-        try await Task.sleep(for: .milliseconds(400))
-        #expect(!detail.isVisible)
+        try await waitForPanelAnimation { !detail.isVisible }
         #expect(panel.isVisible)
         try press(36, in: panel)
         #expect(opened == [second.id, second.id])
         viewer.escape()
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitForPanelAnimation { !detail.isVisible }
         try press(53, in: panel)
         #expect(!panel.isVisible)
     }
