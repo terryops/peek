@@ -722,6 +722,7 @@ struct ViewerSwipeTests {
         // Keep pass-through events outside children: NSScrollView otherwise enters
         // native concurrent tracking, which waits for events in the system queue.
         cg.location = CGPoint(x: -10000, y: -10000)
+        cg.flags = []
         if let timestamp { cg.timestamp = UInt64(timestamp * 1_000_000_000) }
         // CoreGraphics and AppKit use different raw values for both phase enums.
         let cgPhase: CGScrollPhase?
