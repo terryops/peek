@@ -10,8 +10,8 @@ struct FloatingCardTests {
         var item = PeekItem(id: UUID().uuidString, created: Date(), source: "Test", files: [])
         let id = item.id
         defer { stack.sync([]); Thumbs.forget(id) }
-        _ = await withCheckedContinuation { continuation in
-            Thumbs.load(item) { continuation.resume(returning: $0) }
+        await withCheckedContinuation { continuation in
+            Thumbs.load(item) { _ in continuation.resume() }
         }
         stack.sync([item])
         stack.pointerEntered(force: true)
@@ -70,8 +70,8 @@ struct FloatingCardTests {
             let url = try #require(item.urls.first)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url)
-            _ = await withCheckedContinuation { continuation in
-                Thumbs.load(item) { continuation.resume(returning: $0) }
+            await withCheckedContinuation { continuation in
+                Thumbs.load(item) { _ in continuation.resume() }
             }
         }
 
