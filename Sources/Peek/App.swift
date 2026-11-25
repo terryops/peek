@@ -152,6 +152,7 @@ final class App: NSObject, NSApplicationDelegate {
         guard var item = item(id),
               item.urls.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return false }
         if dryRun { log("open \(item.urls.map(\.lastPathComponent))") }
+        cards.cancelPreviewRetraction(id)
         Viewer.shared.show(item, from: rect, returningTo: window)
         item.seen = true
         item.lastOpened = Date()

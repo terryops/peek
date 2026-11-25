@@ -283,7 +283,7 @@ final class Card: NSObject {
     private func scheduleLinger() {
         lingerTimer?.invalidate()
         lingerTimer = nil
-        guard model.item.seen, !model.hovered else { return }
+        guard model.item.seen, !model.hovered, stack?.hasPendingPreviewRetraction(id) != true else { return }
         let since = lastTouched ?? model.item.lastOpened ?? Date()
         let wait = max(1, Prefs.linger - Date().timeIntervalSince(since))
         lingerTimer = Timer.scheduledTimer(withTimeInterval: wait, repeats: false) { [weak self] _ in
@@ -378,12 +378,14 @@ final class Card: NSObject {
 final class CardStack {
     enum Mode { case normal, tucked }
     private static let unreadTuckDelay: TimeInterval = 5 * 60
+    private static let previewRetractionDelay: TimeInterval = 2.5
 
     weak var app: App?
     private(set) var cards: [Card] = []
     private(set) var mode: Mode = .normal
     private(set) var peeking = false
     private var leaving: [Card] = []
+    private var previewRetractions: [String: DispatchWorkItem] = [:]
     private var screen: NSScreen?
     private var loading = Set<String>()
     private let pill = StackPill()
@@ -421,6 +423,7 @@ final class CardStack {
         let candidates = items.filter { item in
             if item.dismissed { return false }
             if !item.seen { return true }
+            if hasPendingPreviewRetraction(item.id) { return true }
             if let card = shown[item.id] { return !card.lingerExpired }
             guard let opened = item.lastOpened else { return false }
             return Date().timeIntervalSince(opened) < Prefs.linger
@@ -516,6 +519,24 @@ final class CardStack {
             relayout()
         }
     }
+
+    func retractAfterPreview(_ id: String) {
+        guard cards.contains(where: { $0.id == id }) else { return }
+        cancelPreviewRetraction(id)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.app?.dismiss(id)
+            self.previewRetractions.removeValue(forKey: id)
+        }
+        previewRetractions[id] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.previewRetractionDelay, execute: work)
+    }
+
+    func cancelPreviewRetraction(_ id: String) {
+        previewRetractions.removeValue(forKey: id)?.cancel()
+    }
+
+    func hasPendingPreviewRetraction(_ id: String) -> Bool { previewRetractions[id] != nil }
 
     /// Style changed: rebuild every card in the new look.
     func restyle() {
@@ -805,7 +826,8 @@ final class CardStack {
         leaving.append(card)
         let reduce = Anim.reduceMotion
         let end = reduce ? card.panel.frame : card.panel.frame.offsetBy(dx: 40, dy: 0)
-        Anim.run(reduce ? 0.18 : 0.24, Anim.inCubic, {
+        let duration = reduce ? 0.18 : (hasPendingPreviewRetraction(card.id) ? 0.45 : 0.24)
+        Anim.run(duration, Anim.inCubic, {
             card.panel.animator().setFrame(end, display: true)
             card.panel.animator().alphaValue = 0
         }, done: { [weak self] in

@@ -81,7 +81,7 @@ PEEK_TARGET=<target-uuid> peek report.pdf
 - **Card gestures** — Click to open the first file · `⌥`-Click to reveal in Finder · Drag files directly off a card into other apps · Two-finger swipe right to dismiss · Right-click for context actions (*Open, Reveal in Finder, Copy, Tuck, Close*). Cards from local Rex sessions also offer *Jump to Session*.
 - **Styles & layout** — Choose between *Rich* (`大图`), *Compact* (`简洁`), and *Photo* (`照片`) card styles, and toggle **Stacked Deck** vs **Vertical List** from the menu bar.
 - **Tuck away** — Collapse the card stack into a right-edge handle that peeks out on hover.
-- **Lifecycle** — Unread cards are marked with an accent dot. If the newest unread card stays unopened for 5 minutes, the stack tucks into the right-edge handle. Hover over the handle to see the cards again. Viewed cards auto-dismiss after 5 minutes of inactivity. Up to 3 cards show at once with extras queued. Snapshots in `~/Library/Caches/Peek/` are cleaned up after 24 hours.
+- **Lifecycle** — Unread cards are marked with an accent dot. If the newest unread card stays unopened for 5 minutes, the stack tucks into the right-edge handle. Hover over the handle to see the cards again. After you close a preview, its floating card stays visible for about 2.5 seconds, then slides away. Up to 3 cards show at once with extras queued. Snapshots in `~/Library/Caches/Peek/` are cleaned up after 24 hours.
 - **Viewer** — Double-click an image to toggle between fit and actual pixels. On a trackpad, spread or pinch two fingers to zoom continuously. Double-tap with two fingers to zoom at the pointer, then double-tap again to fit the whole image. Use `⌘±` to zoom, the scroll wheel or a two-finger horizontal swipe to cycle files, and `⌘D` for side-by-side comparison. In wide windows, swipe up with two fingers over the preview to go to the next file, or down to go back. For long documents, scroll to the corresponding edge before swiping again. Scroll the sidebar to browse thumbnails. Click a thumbnail or comparison image to view that file. `⌘C` shows a brief confirmation after copying. External web links in Markdown/HTML open in your default browser.
 
 ## Keyboard Shortcuts
@@ -96,8 +96,7 @@ Global shortcuts use Carbon hotkeys and require no Accessibility permission:
 | `⌘W` | Recent Peeks | Close the overview and dismiss all floating cards. History and unread status are preserved |
 | `⌃⌥H` | Global | Tuck or restore card stack |
 | `⌃⌥X` | Global | Dismiss all cards |
-| `⎋` / `Space` | Viewer | Close the detail. Previews opened from Recent Peeks return to the overview with the same card selected |
-| `⌘W` / `⌘⌫` | Viewer | Close viewer and dismiss the current card |
+| `⎋` / `Space` / `⌘W` / `⌘⌫` | Viewer | Close the preview. Previews opened from Recent Peeks return to the overview with the same card selected |
 | `←` `→` / Swipe | Viewer | Previous / next file in card |
 | `↑` `↓` | Viewer | Previous / next file (card for single-file items) |
 | `⌥↑` `⌥↓` | Viewer | Previous / next card |

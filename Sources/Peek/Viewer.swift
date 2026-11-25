@@ -127,6 +127,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             let sourceWindow = hadFocus ? self.sourceWindow : nil
             let returnTo = hadFocus ? self.previousApplication : nil
             self.previousApplication = nil
+            if let id = self.item?.id { self.app?.cards.retractAfterPreview(id) }
             win.orderOut(nil)
             win.alphaValue = 1
             self.sourceWindow = nil
@@ -656,13 +657,6 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         app?.reveal(item.id, only: compare ? nil : index)
     }
 
-    /// ⌘W / ⌘⌫: close the viewer and take the card away.
-    func dismissCurrentCard() {
-        guard let item else { return }
-        close()
-        app?.dismiss(item.id)
-    }
-
     func copyCurrent() {
         guard let item, let win = window, let container = win.contentView else { return }
         let copied = app?.copy(item.id, only: compare ? nil : index) == true
@@ -907,7 +901,7 @@ final class ViewerWindow: NSPanel {
               let viewer else { return false }
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
         guard key == "w" || (key.isEmpty && event.keyCode == 13) else { return false }
-        viewer.dismissCurrentCard()
+        viewer.close()
         return true
     }
 
@@ -1005,7 +999,7 @@ final class ViewerWindow: NSPanel {
         case 8 where cmd: v.copyCurrent()                           // ⌘C
         case 15 where cmd: v.revealCurrent()                        // ⌘R
         case 2 where cmd: v.toggleCompare()                         // ⌘D
-        case 51 where cmd: v.dismissCurrentCard()                   // ⌘⌫
+        case 51 where cmd: v.close()                               // ⌘⌫
         case 29 where cmd: v.zoom(.fit)                             // ⌘0
         case 18 where cmd: v.zoom(.actual)                          // ⌘1
         case 24 where cmd: v.zoom(.zoomIn)                          // ⌘=
@@ -1419,7 +1413,7 @@ struct ShortcutSheet: View {
 
     private var viewer: [(String, String)] {
         var rows = [
-            ("⎋  Space", L10n.tr("关闭查看器", "Close viewer")),
+            ("⎋  Space  ⌘W  ⌘⌫", L10n.tr("关闭查看器", "Close viewer")),
             ("←  →", L10n.tr("切换这张卡里的文件", "Previous / next file")),
             (L10n.tr("双指左右滑", "Swipe ↔"), L10n.tr("上一张 / 下一张文件", "Previous / next file")),
             (L10n.tr("滚轮上下", "Scroll ↕"), L10n.tr("上一张 / 下一张图片", "Previous / next image")),
@@ -1428,7 +1422,6 @@ struct ShortcutSheet: View {
             ("⌘C", L10n.tr("拷贝", "Copy")),
             ("⌘R", L10n.tr("在访达中显示", "Reveal in Finder")),
             ("⌘D", L10n.tr("并排对比", "Side-by-side compare")),
-            ("⌘W  ⌘⌫", L10n.tr("关闭并收走这张卡", "Close & dismiss card")),
             ("⌘0  ⌘1", L10n.tr("适应窗口 / 原始像素", "Fit to window / 1:1 pixels")),
             ("⌘=  ⌘-", L10n.tr("放大 / 缩小", "Zoom in / out")),
             (L10n.tr("⌘ + 滚轮", "⌘ + Wheel"), L10n.tr("在指针处缩放图片或文档", "Zoom image or document at pointer")),
