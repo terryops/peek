@@ -25,11 +25,12 @@ final class CardPanel: NSPanel {
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isFloatingPanel = true
         level = .statusBar
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         backgroundColor = .clear
         isOpaque = false
         hasShadow = true
         hidesOnDeactivate = false
+        canHide = false
         becomesKeyOnlyIfNeeded = true
         isMovable = false
         isReleasedWhenClosed = false
@@ -229,12 +230,12 @@ final class Card: NSObject {
     func jump() { stack?.app?.jump(id, dismissCard: true) }
     func close(all: Bool) { all ? stack?.app?.dismissAll() : stack?.app?.dismiss(id) }
 
-    func setHover(_ on: Bool, close: Bool) {
+    func setHover(_ inside: Bool, close: Bool) {
         let was = model.hovered
-        let on = on && !model.shell
+        let on = inside && shown && !model.shell
         if was != on { model.hovered = on }
         if model.closeHovered != (close && on) { model.closeHovered = close && on }
-        if on || model.shell { stack?.pointerEntered() }
+        if inside && shown { stack?.pointerEntered() }
         guard was != on else { return }
         if on {
             lingerTimer?.invalidate()
@@ -387,11 +388,11 @@ final class CardStack {
     private var loading = Set<String>()
     private let pill = StackPill()
     private let tab = EdgeTab()
-    private var viewerVisible = false
+    private var viewerFocused = false
     private var automaticallyTucked = false
     private var lastExpanded = Date.distantPast
     private var autoTuckTimer: Timer?
-    private var stackVisible: Bool { !viewerVisible && (mode == .normal || peeking) }
+    private var stackVisible: Bool { !viewerFocused && (mode == .normal || peeking) }
     private var expanded: Bool { Prefs.stacking == .list || stackHovered || peeking }
     private var windowOrder: [Int] = []
 
@@ -454,13 +455,15 @@ final class CardStack {
             if let card = shown[item.id] {
                 next.append(card)
             } else {
-                if cards.isEmpty && next.isEmpty { screen = nil }
                 next.append(Card(item: item, thumbs: Thumbs.cached(item) ?? [], style: style, stack: self))
                 fresh.insert(item.id)
             }
         }
         let changed = next.map(\.id) != cards.map(\.id)
         cards = next
+        // A new delivery follows the pointer's display. Hover, dismissal and
+        // queue promotion keep the stack anchored for the current interaction.
+        if let newest = items.first, fresh.contains(newest.id) { screen = nil }
         if cards.isEmpty {
             // Nothing left to tuck away: the next card shows normally again.
             mode = .normal
@@ -483,20 +486,21 @@ final class CardStack {
         }
         scheduleAutoTuck()
         if changed || !fresh.isEmpty { layout(fresh: fresh) }
-        if !fresh.isEmpty && !viewerVisible && !stackVisible { tab.bump() }
+        if !fresh.isEmpty && !viewerFocused && !stackVisible { tab.bump() }
         updateControls()
     }
 
     func relayout() {
-        if let s = screen, !NSScreen.screens.contains(s) { screen = nil }
         layout(fresh: [])
         updateControls()
     }
 
-    func setViewerVisible(_ visible: Bool, viewedCardID: String? = nil) {
-        guard visible != viewerVisible else { return }
-        viewerVisible = visible
-        if visible {
+    func setViewerFocused(_ focused: Bool, viewedCardID: String? = nil) {
+        if let viewedCardID { cards.first { $0.id == viewedCardID }?.restartLinger() }
+        guard focused != viewerFocused else { return }
+        viewerFocused = focused
+        scheduleAutoTuck()
+        if focused {
             peeking = false
             stackHovered = false
             hoverIntent?.cancel()
@@ -509,12 +513,8 @@ final class CardStack {
             pill.panel.orderOut(nil)
             tab.panel.orderOut(nil)
         } else {
-            lastExpanded = Date()
-            if let viewedCardID { cards.first { $0.id == viewedCardID }?.restartLinger() }
             relayout()
-            if mode == .tucked, !cards.isEmpty { tab.show(delay: 0) }
         }
-        scheduleAutoTuck()
     }
 
     /// Style changed: rebuild every card in the new look.
@@ -537,14 +537,13 @@ final class CardStack {
         autoTuckTimer?.invalidate()
         autoTuckTimer = nil
         peeking = false
-        pill.hide()
+        hoverIntent?.cancel()
+        hoverIntent = nil
         for (i, card) in cards.enumerated() { slideOut(card, delay: Double(i) * 0.03) }
-        if let s = currentScreen() { tab.place(on: s) }
-        updateTab()
-        if !viewerVisible { tab.show(delay: 0.12) }
         // The mouse is probably still where the cards were; don't bounce them right back.
         stopPolling()
         stackHovered = false
+        updateControls()
     }
 
     func untuck() {
@@ -554,7 +553,6 @@ final class CardStack {
         lastExpanded = Date()
         let wasPeeking = peeking
         peeking = false
-        tab.hide()
         if !wasPeeking { layout(fresh: []) }
         updateControls()
         scheduleAutoTuck()
@@ -563,7 +561,7 @@ final class CardStack {
     private func scheduleAutoTuck() {
         autoTuckTimer?.invalidate()
         autoTuckTimer = nil
-        guard mode == .normal, !viewerVisible, !stackHovered,
+        guard mode == .normal, !viewerFocused,
               let newestUnread = cards.first(where: { !$0.model.item.seen })?.model.item else { return }
         let deadline = max(lastExpanded, newestUnread.created).addingTimeInterval(Self.unreadTuckDelay)
         guard deadline > Date() else {
@@ -580,25 +578,20 @@ final class CardStack {
     private func peek() {
         guard mode == .tucked, !peeking, !cards.isEmpty else { return }
         peeking = true
-        tab.hide()
         layout(fresh: [])
-        updateControls()
     }
 
     private func unpeek() {
         guard peeking else { return }
         peeking = false
-        pill.hide()
         for (i, card) in cards.enumerated().reversed() { slideOut(card, delay: Double(cards.count - 1 - i) * 0.025) }
-        updateTab()
-        tab.show(delay: 0.1)
     }
 
     // MARK: hover across the whole stack
 
     /// `force` skips the short hover-intent delay (the handle has its own; debug uses it too).
     func pointerEntered(force: Bool = false) {
-        guard !viewerVisible else { return }
+        guard !viewerFocused else { return }
         outsideSince = nil
         startPolling()
         guard !stackHovered else { return }
@@ -667,11 +660,16 @@ final class CardStack {
             layout(fresh: [])
         }
         updateControls()
-        scheduleAutoTuck()
     }
 
     private func updateControls() {
         updateTab()
+        if mode == .tucked, !peeking, !viewerFocused, !cards.isEmpty, let screen = currentScreen() {
+            tab.place(on: screen)
+            tab.show()
+        } else {
+            tab.hide()
+        }
         if stackHovered && stackVisible && expanded, let last = cards.last {
             pill.show(tucked: mode == .tucked, below: last.targetFrame)
         } else {
@@ -688,7 +686,7 @@ final class CardStack {
     // MARK: layout
 
     private func currentScreen() -> NSScreen? {
-        if let screen, NSScreen.screens.contains(screen) { return screen }
+        if let screen, let current = NSScreen.screens.first(where: { $0 == screen }) { return current }
         let mouse = NSEvent.mouseLocation
         let s = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens.first
         screen = s
@@ -722,7 +720,6 @@ final class CardStack {
 
     private func layout(fresh: Set<String>) {
         guard !cards.isEmpty, let screen = currentScreen() else { return }
-        tab.place(on: screen)
         let targets = frames(on: screen)
         for (i, card) in cards.enumerated() {
             let t = targets[i]

@@ -2,7 +2,7 @@
 
 English · [简体中文](README.zh-CN.md) · [Manual Usage & Shortcuts](docs/manual-usage.md)
 
-Native macOS floating preview cards for AI Agents (Claude Code, Codex, Cursor, Windsurf, OpenClaw, etc.). Instead of popping up Preview or a browser and stealing your keyboard focus—or leaving bare file paths in chat—agents push **images, PDFs, Markdown, and HTML** to non-activating cards in the top-right corner of your screen. Click a card when you are ready to inspect it, press `Esc` to return right where you were typing, or press `↩` to jump straight back to the agent session that sent it.
+Native macOS floating preview cards for AI Agents (Claude Code, Codex, Cursor, Windsurf, OpenClaw, etc.). Instead of popping up Preview or a browser and stealing your keyboard focus—or leaving bare file paths in chat—agents push **images, PDFs, Markdown, and HTML** to non-activating cards in the top-right corner of your screen. Click a card when you are ready to inspect it, press `Esc` to return right where you were typing, or press `↩` on a card from a local Rex session to return to that session.
 
 [**Download for Apple Silicon**](https://github.com/terryops/peek/releases/latest) · macOS 14+ · Signed & Notarized · [Intel download (v1.3.0)](https://github.com/terryops/peek/releases/tag/v1.3.0) · [MIT License](LICENSE)
 
@@ -62,7 +62,7 @@ peek -c "UI Subagent" -t "Dark Mode Check" settings-dark.png
 - **Supported formats** — Images (`png`, `jpg`, `webp`, `gif`, `svg`, `heic`, `avif`, `tiff`, `bmp`), `pdf`, `md` (GitHub Flavored Markdown), and `html` (sandboxed `WKWebView`; external web links open in the default browser).
 - **Flexible flags** — Short (`-t`, `-c`, `-s`) and long (`--title`, `--conversation`, `--source`, `--flag=value`) options work anywhere before `--` on both local macOS `peek` and remote SSH `peek`. When `-t` is omitted, single-file cards use HTML `<title>`, the first Markdown `# ` heading, or the filename.
 - **Safe to overwrite output paths** — Local files are cloned instantly on APFS with zero extra disk space; remote pushes bundle up to 300 referenced assets (64 MiB max) and save originals to `~/Downloads/Peek/<host>/<timestamp>_<title>_<id>/`. Agents can reuse fixed paths like `/tmp/check.png` or `build/report.md` across iterations without mutating earlier cards.
-- **Multi-agent session attribution & jump-back (`↩`)** — When multiple local agents run in parallel, Peek automatically tags each card with its originating Claude Code session (`/rename` name or first prompt), Rex pane, or terminal app. Pressing `↩` (or clicking **Jump to Session** / **回到对话**) jumps straight back to the window or pane that sent that card.
+- **Multi-agent session attribution & jump-back (`↩`)** — When multiple local agents run in parallel, Peek automatically tags each card with its originating Claude Code session (`/rename` name or first prompt), Rex pane, or terminal app. Cards from local Rex sessions also offer **Jump to Session** (`↩`) to return to the originating Rex session or pane.
 
 <p align="center">
   <img src="docs/screenshots/markdown-viewer.png" alt="Agent-pushed Markdown report rendered with bundled local chart assets" width="840">

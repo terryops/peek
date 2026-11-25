@@ -119,6 +119,7 @@ enum SelfTest {
 
         // Shortcut strings
         check(Hotkeys.parse(Hotkeys.Action.open.fallback)?.display == "⌥⌘P", "打开详情的默认快捷键 ⌥⌘P")
+        check(Hotkeys.parse(Hotkeys.Action.recent.fallback)?.display == "⌥4", "最近卡片的默认快捷键 ⌥4")
         check(Hotkeys.parse("⌃⌥H")?.display == "⌃⌥H", "快捷键解析 ⌃⌥H")
         check(Hotkeys.parse("cmd+shift+return")?.display == "⇧⌘↩", "快捷键解析 cmd+shift+return")
         check(Hotkeys.parse("") == nil && Hotkeys.parse("p") == nil, "空串 / 没修饰键 = 关掉")

@@ -2,7 +2,7 @@
 
 [English](README.md) · 简体中文 · [手动使用与快捷键](docs/manual-usage.zh-CN.md)
 
-专为 AI Agent（Claude Code、Codex、Cursor、Windsurf、OpenClaw 等）设计的原生 macOS 浮动预览卡片。Agent 生成的**图片、PDF、Markdown 和 HTML** 不再弹起 Preview 或浏览器抢走你的键盘焦点，也不用去聊天记录里翻裸路径，而是安静推到屏幕右上角的不抢焦点卡片——想看时点击卡片在内置查看器中打开，按 `Esc` 立即回到原窗口继续输入，按 `↩` 直接切回发出这张卡片的对话。
+专为 AI Agent（Claude Code、Codex、Cursor、Windsurf、OpenClaw 等）设计的原生 macOS 浮动预览卡片。Agent 生成的**图片、PDF、Markdown 和 HTML** 不再弹起 Preview 或浏览器抢走你的键盘焦点，也不用去聊天记录里翻裸路径，而是安静推到屏幕右上角的不抢焦点卡片——想看时点击卡片在内置查看器中打开，按 `Esc` 立即回到原窗口继续输入，来自本机 Rex 会话的卡片还可按 `↩` 切回来源会话。
 
 [**下载 Apple Silicon 版**](https://github.com/terryops/peek/releases/latest) · macOS 14+ · 已签名与公证 · [Intel 版下载（v1.3.0）](https://github.com/terryops/peek/releases/tag/v1.3.0) · [MIT License](LICENSE)
 
@@ -62,7 +62,7 @@ peek -c "UI Subagent" -t "深色模式检查" settings-dark.png
 - **支持格式** — 图片（`png`、`jpg`、`webp`、`gif`、`svg`、`heic`、`avif`、`tiff`、`bmp`）、`pdf`、`md`（GFM Markdown）与 `html`（沙盒化 `WKWebView`，外部网页链接通过默认浏览器打开）。
 - **参数位置自由** — 本机 `peek` 与远端 SSH `peek` 均支持短参数（`-t`、`-c`、`-s`）和长参数（`--title`、`--conversation`、`--source`、`--flag=value`），放在文件路径前后均可（`--` 之后视为纯路径）。省略 `-t` 时，单文件卡片自动提取 HTML `<title>`、Markdown 首个 `# ` 标题或文件名。
 - **反复覆盖原路径也不串改** — 本机文件通过 APFS 克隆瞬间生成独立快照，不占额外磁盘空间；远端推送自动附带最多 300 个本地引用资源（上限 64 MiB），并将原文件存至 `~/Downloads/Peek/<主机>/<时间>_<标题>_<短ID>/`。Agent 在多轮迭代中直接覆盖 `/tmp/check.png` 或 `build/report.md` 也不会影响之前推过的卡片。
-- **多 Agent 自动标注来源与「回到对话」（`↩`）** — 本机并行跑多个会话时，卡片顶部会自动识别并标注来源会话（优先取 Claude Code `/rename` 名称、Rex 窗格名或首句 Prompt）。查看卡片时按 `↩` 或点击「回到对话」，即可直接切回发出该卡片的终端或窗格。
+- **多 Agent 自动标注来源与「回到对话」（`↩`）** — 本机并行跑多个会话时，卡片顶部会自动识别并标注来源会话（优先取 Claude Code `/rename` 名称、Rex 窗格名或首句 Prompt）。来自本机 Rex 会话的卡片会显示「回到对话」，点击或按 `↩` 即可切回来源会话或窗格。
 
 <p align="center">
   <img src="docs/screenshots/markdown-viewer.png" alt="Agent 推送的 Markdown 报告与自动打包的本地图表渲染效果" width="840">

@@ -13,6 +13,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     private var window: ViewerWindow?
     private var previousApplication: NSRunningApplication?
+    private weak var sourceWindow: NSWindow?
     private var closeAnimation: UUID?
     private var item: PeekItem?
     private var index = 0
@@ -64,8 +65,9 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     // MARK: open / close
 
-    func show(_ item: PeekItem, from origin: NSRect?) {
+    func show(_ item: PeekItem, from origin: NSRect?, returningTo sourceWindow: NSWindow? = nil) {
         guard !item.files.isEmpty else { return }
+        self.sourceWindow = sourceWindow
         if takesKey, let front = NSWorkspace.shared.frontmostApplication,
            front.processIdentifier != NSRunningApplication.current.processIdentifier {
             previousApplication = front
@@ -83,7 +85,6 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         dismissCopyFeedback()
         let target = idealFrame(on: screen)
         reloadContent()
-        app?.cards.setViewerVisible(true)
         if win.isMiniaturized { win.deminiaturize(nil) }
 
         let alreadyVisible = win.isVisible
@@ -122,12 +123,17 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }, done: { [weak self] in
             guard let self, self.closeAnimation == animation else { return }
             self.closeAnimation = nil
-            let returnTo = win.isKeyWindow && NSApp.isActive ? self.previousApplication : nil
+            let hadFocus = win.isKeyWindow && NSApp.isActive
+            let sourceWindow = hadFocus ? self.sourceWindow : nil
+            let returnTo = hadFocus ? self.previousApplication : nil
             self.previousApplication = nil
             win.orderOut(nil)
             win.alphaValue = 1
-            self.app?.cards.setViewerVisible(false, viewedCardID: self.item?.id)
-            if let returnTo, !returnTo.isTerminated, NSApp.keyWindow == nil {
+            self.sourceWindow = nil
+            self.app?.cards.setViewerFocused(false, viewedCardID: self.item?.id)
+            if let sourceWindow, sourceWindow.isVisible, !sourceWindow.isMiniaturized {
+                sourceWindow.makeKeyAndOrderFront(nil)
+            } else if let returnTo, !returnTo.isTerminated, NSApp.keyWindow == nil {
                 NSApp.yieldActivation(to: returnTo)
                 returnTo.activate(from: .current, options: [])
             }
@@ -139,12 +145,17 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         return false
     }
 
-    func windowDidMiniaturize(_ notification: Notification) {
-        app?.cards.setViewerVisible(false, viewedCardID: item?.id)
+    func windowWillClose(_ notification: Notification) {
+        sourceWindow = nil
+        app?.cards.setViewerFocused(false, viewedCardID: item?.id)
     }
 
-    func windowDidDeminiaturize(_ notification: Notification) {
-        app?.cards.setViewerVisible(true)
+    func windowDidBecomeKey(_ notification: Notification) {
+        app?.cards.setViewerFocused(true)
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        app?.cards.setViewerFocused(false, viewedCardID: item?.id)
     }
 
     /// Item changed on disk (deleted / cleaned up): close if it's gone.
@@ -590,6 +601,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     func toggleHelp() {
         window?.cancelSwipeTracking()
         cancelSwipeAnimation()
+        if !help.visible { help.canJump = item?.origin?.canJump == true }
         withAnimation(.easeOut(duration: 0.16)) { help.visible.toggle() }
         helpHost?.isHidden = !help.visible
     }
@@ -602,7 +614,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// ⌥↑ / ⌥↓: the next newer / older card.
     func stepCard(_ d: Int) {
         guard let item else { return }
-        app?.openNeighbor(item.id, d)
+        app?.openNeighbor(item.id, d, returningTo: sourceWindow)
     }
 
     func revealCurrent() {
@@ -781,8 +793,9 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     /// Close the viewer and go back to the conversation; the card stays (read) for a while.
     func jumpBack() {
-        guard let item else { return }
-        if item.origin?.canJump == true { previousApplication = nil }
+        guard let item, item.origin?.canJump == true else { return }
+        sourceWindow = nil
+        previousApplication = nil
         close()
         app?.jump(item.id)
     }
@@ -1336,20 +1349,20 @@ struct CompareView: View {
 
 final class HelpModel: ObservableObject {
     @Published var visible = false
+    var canJump = false
 }
 
 struct ShortcutSheet: View {
     @ObservedObject var m: HelpModel
 
     private var viewer: [(String, String)] {
-        [
+        var rows = [
             ("⎋  Space", L10n.tr("关闭查看器", "Close viewer")),
             ("←  →", L10n.tr("切换这张卡里的文件", "Previous / next file")),
             (L10n.tr("双指左右滑", "Swipe ↔"), L10n.tr("上一张 / 下一张文件", "Previous / next file")),
             (L10n.tr("滚轮上下", "Scroll ↕"), L10n.tr("上一张 / 下一张图片", "Previous / next image")),
             ("↑  ↓", L10n.tr("切换文件（单文件时切换卡片）", "Files (cards for single files)")),
             ("⌥↑  ⌥↓", L10n.tr("上一张 / 下一张卡", "Newer / older card")),
-            ("↩", L10n.tr("回到对话", "Jump to session")),
             ("⌘C", L10n.tr("拷贝", "Copy")),
             ("⌘R", L10n.tr("在访达中显示", "Reveal in Finder")),
             ("⌘D", L10n.tr("并排对比", "Side-by-side compare")),
@@ -1357,11 +1370,14 @@ struct ShortcutSheet: View {
             ("⌘0  ⌘1", L10n.tr("适应窗口 / 原始像素", "Fit to window / 1:1 pixels")),
             ("⌘=  ⌘-", L10n.tr("放大 / 缩小", "Zoom in / out")),
         ]
+        if m.canJump { rows.append(("↩", L10n.tr("回到对话", "Jump to session"))) }
+        return rows
     }
 
     private var global: [(String, String)] {
         let names: [(Hotkeys.Action, String)] = [
             (.open, L10n.tr("打开最新卡片", "Open newest card")),
+            (.recent, RecentPanel.displayTitle),
             (.tuck, L10n.tr("暂时收起 / 恢复", "Tuck aside / restore")),
             (.closeAll, L10n.tr("全部关闭", "Close all")),
         ]

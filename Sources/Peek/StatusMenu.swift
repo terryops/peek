@@ -122,10 +122,26 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         styleRoot.submenu = styles
         menu.addItem(styleRoot)
 
+        let behaviorMenu = NSMenu()
+        for behavior in RecentShortcutBehavior.allCases {
+            let option = NSMenuItem(title: behavior.label, action: #selector(setRecentShortcutBehavior(_:)), keyEquivalent: "")
+            option.target = self
+            option.representedObject = behavior.rawValue
+            option.state = behavior == Prefs.recentShortcutBehavior ? .on : .off
+            behaviorMenu.addItem(option)
+        }
+        let behaviorRoot = NSMenuItem(title: L10n.tr("最近卡片快捷键", "Recent Cards Shortcut"), action: nil, keyEquivalent: "")
+        behaviorRoot.submenu = behaviorMenu
+        menu.addItem(behaviorRoot)
+
         let newest = NSMenuItem(title: L10n.tr("打开最新卡片", "Open Newest Card"), action: #selector(openNewest), keyEquivalent: "")
         newest.target = self
         Hotkeys.shared.decorate(newest, .open)
         menu.addItem(newest)
+        let recent = NSMenuItem(title: RecentPanel.displayTitle, action: #selector(showRecent), keyEquivalent: "")
+        recent.target = self
+        Hotkeys.shared.decorate(recent, .recent)
+        menu.addItem(recent)
         if let stack = app?.cards, !stack.cards.isEmpty {
             let tucked = stack.mode == .tucked
             let toggleTitle = tucked
@@ -204,6 +220,11 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     @objc private func clearAll() { app?.clearAll() }
     @objc private func toggleTuck() { app?.toggleTuck() }
     @objc private func openNewest() { app?.openNewest() }
+    @objc private func showRecent() { app?.showRecentOverview() }
+    @objc private func setRecentShortcutBehavior(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String, let behavior = RecentShortcutBehavior(rawValue: value) else { return }
+        Prefs.recentShortcutBehavior = behavior
+    }
     @objc private func closeAll() { app?.dismissAll() }
     @objc private func quit() { NSApp.terminate(nil) }
 

@@ -66,6 +66,19 @@ struct RemoteTransferTests {
         #expect(origin.conversation == "old")
         #expect(origin.canJump == false)
     }
+    @Test func jumpingRequiresALocalRexSessionAndCommand() throws {
+        let stored = Data(#"{"conversation":"Build","terminalBundle":"com.apple.Terminal"}"#.utf8)
+        var origin = try JSONDecoder().decode(PeekOrigin.self, from: stored)
+        #expect(!origin.canJump)
+        origin.rexSession = "session:123"
+        #expect(!origin.canJump)
+        origin.rexBin = "/absent-\(UUID().uuidString)/rex"
+        #expect(!origin.canJump)
+        origin.rexBin = "/usr/bin/true"
+        #expect(origin.canJump)
+        origin.remoteHost = "server"
+        #expect(!origin.canJump)
+    }
     @Test func rejectsSSHOptionAndShellInjection() throws {
         for address in ["-oProxyCommand=evil", "a b", "host;touch", "a\nwhoami", "$(evil)", "", "user@", "user@example.com:bad", "user@example.com:70000", "ssh://user@[::1]:2222"] {
             #expect(throws: (any Error).self) { try SSHConnection.validate(address: address) }

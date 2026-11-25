@@ -14,7 +14,23 @@ enum CardStyle: String, CaseIterable {
 
 enum StackMode: String { case deck, list }
 
+enum RecentShortcutBehavior: String, CaseIterable {
+    case overview, singleUnread
+
+    var label: String {
+        switch self {
+        case .overview: L10n.tr("始终打开总览", "Always Open Overview")
+        case .singleUnread: L10n.tr("仅一张未读时直接打开", "Open the Only Unread Card")
+        }
+    }
+}
+
 enum Prefs {
+    static var recentShortcutBehavior: RecentShortcutBehavior {
+        get { RecentShortcutBehavior(rawValue: UserDefaults.standard.string(forKey: "recentShortcutBehavior") ?? "") ?? .overview }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "recentShortcutBehavior") }
+    }
+
     /// How long a card stays after you've opened it (hovering resets the clock).
     static var linger: TimeInterval {
         let v = UserDefaults.standard.double(forKey: "lingerSeconds")

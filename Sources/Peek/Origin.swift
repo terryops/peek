@@ -4,6 +4,8 @@ import Darwin
 /// Figures out which conversation is calling `peek` (CLI side, runs inside the
 /// Claude Code Bash tool). Everything here is best-effort and fast.
 enum Origin {
+    static let rexBundleID = "com.superlogical.rex"
+
     static func detect() -> PeekOrigin? {
         let env = ProcessInfo.processInfo.environment
         var o = PeekOrigin()
@@ -22,7 +24,7 @@ enum Origin {
             ?? rexBlockLabel(o.rexBlock, bin: o.rexBin)
             ?? prompts.first.map { clean($0, max: 26) }
             ?? rexLabel(o.rexSession, bin: o.rexBin)
-        o.terminalBundle = o.rexSession != nil ? "com.superlogical.rex" : terminalBundle()
+        o.terminalBundle = o.rexSession != nil ? rexBundleID : terminalBundle()
         if o.sessionID == nil && o.conversation == nil && o.terminalBundle == nil { return nil }
         return o
     }

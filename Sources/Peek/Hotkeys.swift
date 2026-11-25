@@ -15,10 +15,11 @@ final class Hotkeys {
     }
 
     enum Action: UInt32, CaseIterable {
-        case open = 1, tuck, closeAll
+        case open = 1, tuck, closeAll, recent
         var defaultsKey: String {
             switch self {
             case .open: "hotkeyOpen"
+            case .recent: "hotkeyRecent"
             case .tuck: "hotkeyTuck"
             case .closeAll: "hotkeyCloseAll"
             }
@@ -26,6 +27,7 @@ final class Hotkeys {
         var fallback: String {
             switch self {
             case .open: "opt+cmd+p"
+            case .recent: "opt+4"
             case .tuck: "ctrl+opt+h"
             case .closeAll: "ctrl+opt+x"
             }
@@ -55,8 +57,7 @@ final class Hotkeys {
         }
     }
 
-    fileprivate func fire(_ id: UInt32) {
-        guard let action = Action(rawValue: id) else { return }
+    func fire(_ action: Action) {
         DispatchQueue.main.async { self.handlers[action]?() }
     }
 
@@ -68,7 +69,7 @@ final class Hotkeys {
             var hk = EventHotKeyID()
             GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                               nil, MemoryLayout<EventHotKeyID>.size, nil, &hk)
-            Hotkeys.shared.fire(hk.id)
+            if let action = Action(rawValue: hk.id) { Hotkeys.shared.fire(action) }
             return noErr
         }, 1, &spec, nil, nil)
     }
@@ -80,7 +81,7 @@ final class Hotkeys {
         item.keyEquivalentModifierMask = c.menuMods
     }
 
-    // MARK: parsing "ctrl+opt+p" / "⌃⌥P"
+    // MARK: parsing "opt+4" / "⌥4"
 
     static func parse(_ spec: String) -> Combo? {
         let s = spec.trimmingCharacters(in: .whitespaces).lowercased()

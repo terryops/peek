@@ -193,6 +193,7 @@ final class EdgeTab {
     private(set) var isShown = false
     private(set) var target: NSRect = .zero
     private var intent: DispatchWorkItem?
+    private var waitForPointerExit = false
     /// Hovered long enough to mean it (so brushing past the screen edge doesn't expand anything).
     var onPeekIntent: (() -> Void)?
     var onClick: (() -> Void)?
@@ -206,7 +207,8 @@ final class EdgeTab {
     private func hover(_ on: Bool) {
         model.hovered = on
         intent?.cancel()
-        guard on else { return }
+        if !on { waitForPointerExit = false }
+        guard on, !waitForPointerExit else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.model.hovered, self.isShown else { return }
             self.onPeekIntent?()
@@ -231,21 +233,17 @@ final class EdgeTab {
             : L10n.tr("已收起 \(count) 张卡片，展开", "Tucked \(count) cards, expand")
     }
 
-    func show(delay: TimeInterval = 0.1) {
-        guard !isShown else { return }
+    func show() {
+        guard !isShown || !panel.isVisible else { return }
         isShown = true
         model.hovered = false
-        panel.setFrame(target.offsetBy(dx: Self.size.width, dy: 0), display: false)
+        // Appearing under a parked pointer must not immediately fan the cards out again.
+        waitForPointerExit = target.contains(NSEvent.mouseLocation)
+        panel.setFrame(target, display: false)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         panel.invalidateShadow()
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.isShown else { return }
-            Anim.run(0.4, Anim.outExpo) {
-                self.panel.animator().setFrame(self.target, display: true)
-                self.panel.animator().alphaValue = 1
-            }
-        }
+        Anim.run(0.22, Anim.outExpo) { panel.animator().alphaValue = 1 }
     }
 
     func hide() {
@@ -253,7 +251,6 @@ final class EdgeTab {
         isShown = false
         intent?.cancel()
         Anim.run(0.16, Anim.inCubic, {
-            panel.animator().setFrame(target.offsetBy(dx: Self.size.width * 0.6, dy: 0), display: true)
             panel.animator().alphaValue = 0
         }, done: { [weak self] in
             guard let self, !self.isShown else { return }

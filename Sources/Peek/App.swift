@@ -12,6 +12,7 @@ final class App: NSObject, NSApplicationDelegate {
     private(set) var items: [PeekItem] = []
     let cards = CardStack()
     let menu = StatusMenu()
+    private var recentPanel: RecentPanel?
     @MainActor private lazy var remoteConnections = RemoteConnections()
     @MainActor private lazy var remoteSettings = RemoteSettings(connections: remoteConnections)
     private var watcher: DispatchSourceFileSystemObject?
@@ -33,6 +34,7 @@ final class App: NSObject, NSApplicationDelegate {
         watch()
         Hotkeys.shared.start([
             .open: { [weak self] in self?.openNewest() },
+            .recent: { [weak self] in self?.toggleRecent() },
             .tuck: { [weak self] in self?.toggleTuck() },
             .closeAll: { [weak self] in self?.dismissAll() },
         ])
@@ -54,8 +56,14 @@ final class App: NSObject, NSApplicationDelegate {
         dnc.addObserver(self, selector: #selector(quitNotification), name: Paths.quit, object: nil,
                         suspensionBehavior: .deliverImmediately)
 
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.reload() }
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.reload()
+            self?.cards.relayout()
+        }
+        workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.cards.relayout()
+        }
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             self?.cards.relayout()
@@ -85,6 +93,7 @@ final class App: NSObject, NSApplicationDelegate {
     func refresh() {
         cards.sync(items)
         menu.update(items)
+        if let recentPanel, recentPanel.isVisible { recentPanel.update(items) }
         Viewer.shared.itemsChanged(items)
     }
 
@@ -138,14 +147,16 @@ final class App: NSObject, NSApplicationDelegate {
     // MARK: actions
 
     /// Opens in Peek's own viewer (never Preview), zooming out of the card.
-    func open(_ id: String, from rect: NSRect? = nil) {
-        guard var item = item(id) else { return }
-        guard item.urls.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return }
+    @discardableResult
+    func open(_ id: String, from rect: NSRect? = nil, returningTo window: NSWindow? = nil) -> Bool {
+        guard var item = item(id),
+              item.urls.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return false }
         if dryRun { log("open \(item.urls.map(\.lastPathComponent))") }
-        Viewer.shared.show(item, from: rect)
+        Viewer.shared.show(item, from: rect, returningTo: window)
         item.seen = true
         item.lastOpened = Date()
         commit(item)
+        return true
     }
 
     private func pick(_ item: PeekItem, _ only: Int?) -> [Int] {
@@ -183,26 +194,22 @@ final class App: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// Back to the conversation that pushed the card: the exact Rex pane, else its terminal app.
+    /// Focus the local Rex session and, when recorded, the pane that sent the card.
     /// Going back means you've looked: the files count as read, and `dismissCard`
     /// also takes the card off screen (used when jumping straight from a card).
     func jump(_ id: String, dismissCard: Bool = false) {
-        guard var item = item(id) else { return }
+        guard var item = item(id), let origin = item.origin, let target = origin.jumpTarget else { return }
         item.seen = true
         if dismissCard { item.dismissed = true }
         commit(item)
-        guard let o = item.origin else { return }
-        if dryRun { return log("jump \(o.rexSession ?? o.terminalBundle ?? "-") dismissCard=\(dismissCard)") }
-        if let session = o.rexSession, let bin = o.rexBin {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: bin)
-            p.arguments = ["focus", "-s", session] + (o.rexBlock.map { [$0] } ?? [])
-            p.standardOutput = FileHandle.nullDevice
-            p.standardError = FileHandle.nullDevice
-            try? p.run()
-        }
-        if let bundle = o.terminalBundle,
-           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) {
+        if dryRun { return log("jump \(target.session) dismissCard=\(dismissCard)") }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: target.executable)
+        p.arguments = ["focus", "-s", target.session] + (origin.rexBlock?.nonEmpty.map { [$0] } ?? [])
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try? p.run()
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Origin.rexBundleID) {
             let cfg = NSWorkspace.OpenConfiguration()
             cfg.activates = true
             NSWorkspace.shared.openApplication(at: url, configuration: cfg)
@@ -217,15 +224,36 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     /// ↑ / ↓ in the viewer: walk the history, newest first.
-    func openNeighbor(_ id: String, _ offset: Int) {
+    func openNeighbor(_ id: String, _ offset: Int, returningTo window: NSWindow? = nil) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
         let j = i + offset
         guard items.indices.contains(j) else { NSSound.beep(); return }
-        open(items[j].id, from: nil)
+        open(items[j].id, returningTo: window)
     }
 
     func toggleTuck() {
         cards.mode == .tucked ? cards.untuck() : cards.tuck()
+    }
+
+    private func toggleRecent() {
+        if let recentPanel, recentPanel.isKeyWindow {
+            recentPanel.close()
+            return
+        }
+        if Prefs.recentShortcutBehavior == .singleUnread, let item = RecentPanel.singleUnread(in: items) {
+            let card = cards.cards.first { $0.id == item.id && $0.shown }
+            let overview = recentPanel?.isVisible == true ? recentPanel : nil
+            if open(item.id, from: card?.panel.frame, returningTo: overview) { return }
+        }
+        showRecentOverview()
+    }
+
+    func showRecentOverview() {
+        let panel = recentPanel ?? RecentPanel { [weak self] id, panel in
+            self?.open(id, from: panel.frame, returningTo: panel)
+        }
+        recentPanel = panel
+        panel.present(items)
     }
 
     func setStyle(_ style: CardStyle) {
@@ -310,9 +338,10 @@ final class App: NSObject, NSApplicationDelegate {
         case "viewer-jump": Viewer.shared.jumpBack()
         case "hotkey":
             switch parts.count > 1 ? parts[1] : "" {
-            case "open": openNewest()
-            case "tuck": toggleTuck()
-            case "closeall": dismissAll()
+            case "open": Hotkeys.shared.fire(.open)
+            case "recent": Hotkeys.shared.fire(.recent)
+            case "tuck": Hotkeys.shared.fire(.tuck)
+            case "closeall": Hotkeys.shared.fire(.closeAll)
             default: break
             }
         case "vkey":

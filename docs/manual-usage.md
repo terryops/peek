@@ -78,7 +78,7 @@ PEEK_TARGET=<target-uuid> peek report.pdf
 
 ## Cards & Viewer Interactions
 
-- **Card gestures** — Click to open the first file · `⌥`-Click to reveal in Finder · Drag files directly off a card into other apps · Two-finger swipe right to dismiss · Right-click for context actions (*Open, Back to Conversation, Reveal in Finder, Copy, Tuck, Close*).
+- **Card gestures** — Click to open the first file · `⌥`-Click to reveal in Finder · Drag files directly off a card into other apps · Two-finger swipe right to dismiss · Right-click for context actions (*Open, Reveal in Finder, Copy, Tuck, Close*). Cards from local Rex sessions also offer *Jump to Session*.
 - **Styles & layout** — Choose between *Rich* (`大图`), *Compact* (`简洁`), and *Photo* (`照片`) card styles, and toggle **Stacked Deck** vs **Vertical List** from the menu bar.
 - **Tuck away** — Collapse the card stack into a right-edge handle that peeks out on hover.
 - **Lifecycle** — Unread cards are marked with an accent dot. If the newest unread card stays unopened for 5 minutes, the stack tucks into the right-edge handle. Hover over the handle to see the cards again. Viewed cards auto-dismiss after 5 minutes of inactivity. Up to 3 cards show at once with extras queued. Snapshots in `~/Library/Caches/Peek/` are cleaned up after 24 hours.
@@ -91,22 +91,28 @@ Global shortcuts use Carbon hotkeys and require no Accessibility permission:
 | Shortcut | Scope | Action |
 | --- | --- | --- |
 | `⌥⌘P` | Global | Open the newest card in the viewer |
+| `⌥4` | Global | Open the six most recent Peeks. Press again in the overview to close it |
+| Arrow keys / `↩` / `Esc` | Recent Peeks | Select a card / open its preview / close the overview |
 | `⌃⌥H` | Global | Tuck or restore card stack |
 | `⌃⌥X` | Global | Dismiss all cards |
-| `⎋` / `Space` | Viewer | Close viewer and bring back the card stack |
+| `⎋` / `Space` | Viewer | Close the detail. Previews opened from Recent Peeks return to the overview with the same card selected |
 | `⌘W` / `⌘⌫` | Viewer | Close viewer and dismiss the current card |
 | `←` `→` / Swipe | Viewer | Previous / next file in card |
 | `↑` `↓` | Viewer | Previous / next file (card for single-file items) |
 | `⌥↑` `⌥↓` | Viewer | Previous / next card |
 | `⌘D` | Viewer | Toggle side-by-side comparison |
 | `⌘0` / `⌘1` / `⌘±` | Viewer | Fit to window / 1:1 pixels / zoom |
-| `⌘C` / `⌘R` / `↩` | Viewer | Copy / reveal in Finder / back to conversation |
+| `⌘C` / `⌘R` / `↩` | Viewer | Copy / reveal in Finder / jump to the originating local Rex session |
 | `?` | Viewer | Toggle shortcut cheat sheet |
+
+The default is **Always Open Overview**. To open a single unread card directly, choose **Recent Cards Shortcut → Open the Only Unread Card** in the Peek menu. If none or several of the six recent cards are unread, the shortcut opens the overview. The **Recent Peeks** menu item always opens the overview.
 
 ## Preferences (`defaults`)
 
 ```sh
 defaults write com.terryops.peek hotkeyOpen "opt+cmd+p"    # "" disables a global shortcut
+defaults write com.terryops.peek hotkeyRecent "opt+4"
+defaults write com.terryops.peek recentShortcutBehavior overview    # overview | singleUnread
 defaults write com.terryops.peek hotkeyTuck "ctrl+opt+h"
 defaults write com.terryops.peek hotkeyCloseAll "ctrl+opt+x"
 defaults write com.terryops.peek lingerSeconds -float 300

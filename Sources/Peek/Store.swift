@@ -51,11 +51,17 @@ struct PeekOrigin: Codable, Hashable {
     var rexSession: String?
     var rexBlock: String?
     var rexBin: String?
-    /// Terminal app hosting the conversation (for "回到对话" outside Rex).
+    /// Bundle identifier of the terminal app that sent the card.
     var terminalBundle: String?
     var remoteHost: String?
 
-    var canJump: Bool { remoteHost == nil && ((rexSession != nil && rexBin != nil) || terminalBundle != nil) }
+    var jumpTarget: (session: String, executable: String)? {
+        guard remoteHost == nil, let session = rexSession?.nonEmpty, let executable = rexBin?.nonEmpty,
+              FileManager.default.isExecutableFile(atPath: executable) else { return nil }
+        return (session, executable)
+    }
+
+    var canJump: Bool { jumpTarget != nil }
 }
 
 struct PeekItem: Codable, Identifiable, Equatable {
