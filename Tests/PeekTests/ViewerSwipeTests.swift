@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import QuartzCore
 import SwiftUI
 import Testing
@@ -570,14 +571,85 @@ struct ViewerSwipeTests {
         }
     }
 
+    @Test func commandWheelKeepsImagePixelUnderPointer() async throws {
+        try await withViewer { viewer, window in
+            let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
+            let document = try #require(image.documentView)
+            let pointer = image.convert(NSPoint(x: image.bounds.width * 0.63, y: image.bounds.height * 0.37), to: nil)
+            let anchor = document.convert(pointer, from: nil)
+            for delta: Int32 in [4, 1, -1] {
+                let old = image.magnification
+                try commandWheel(window, at: pointer, delta: delta)
+                #expect(delta > 0 ? image.magnification > old : image.magnification < old)
+                let now = document.convert(anchor, to: nil)
+                #expect(hypot(now.x - pointer.x, now.y - pointer.y) < 2)
+            }
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+        }
+    }
+
+    @Test func commandWheelKeepsWebDocumentUnderPointer() async throws {
+        try await withViewer(document: true, text: tallDocument) { viewer, window in
+            let web = try #require(webDocument(in: window))
+            let width = web.bounds.width * 0.67, top = web.bounds.height * 0.34
+            let local = NSPoint(x: width, y: web.isFlipped ? top : web.bounds.height - top)
+            @MainActor func pagePoint() async throws -> NSPoint {
+                let values = try await web.evaluateJavaScript("[visualViewport.pageLeft, visualViewport.pageTop, visualViewport.scale]")
+                let v = try #require(values as? [Double])
+                return NSPoint(x: v[0] + width / v[2], y: v[1] + top / v[2])
+            }
+            let anchor = try await pagePoint()
+            for delta: Int32 in [3, -1] {
+                let old = web.magnification
+                try commandWheel(window, at: web.convert(local, to: nil), delta: delta)
+                #expect(delta > 0 ? web.magnification > old : web.magnification < old)
+                let now = try await pagePoint()
+                #expect(hypot(now.x - anchor.x, now.y - anchor.y) < 3)
+            }
+            viewer.zoom(.fit)
+            #expect(web.magnification == 1)
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+        }
+    }
+
+    @Test func commandWheelKeepsPDFPagePointUnderPointer() async throws {
+        try await withViewer(pdf: true) { viewer, window in
+            let pdf = try #require(window.contentView?.subviews.compactMap { ($0 as? ViewerDocumentPage)?.document as? PDFView }.first)
+            let pointer = pdf.convert(NSPoint(x: pdf.bounds.width * 0.68, y: pdf.bounds.height * 0.43), to: nil)
+            let page = try #require(pdf.page(for: pdf.convert(pointer, from: nil), nearest: false))
+            let anchor = pdf.convert(pdf.convert(pointer, from: nil), to: page)
+            for delta: Int32 in [4, -1] {
+                let old = pdf.scaleFactor
+                try commandWheel(window, at: pointer, delta: delta)
+                #expect(delta > 0 ? pdf.scaleFactor > old : pdf.scaleFactor < old)
+                let now = pdf.convert(pdf.convert(anchor, from: page), to: nil)
+                #expect(hypot(now.x - pointer.x, now.y - pointer.y) < 3)
+            }
+            viewer.zoom(.fit)
+            #expect(pdf.autoScales)
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+        }
+    }
+
+    private func commandWheel(_ window: ViewerWindow, at pointer: NSPoint, delta: Int32) throws {
+        let cg = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1,
+                                     wheel1: delta, wheel2: 0, wheel3: 0))
+        let screen = window.convertPoint(toScreen: pointer)
+        let primary = try #require(NSScreen.screens.first)
+        cg.location = CGPoint(x: screen.x, y: primary.frame.maxY - screen.y)
+        cg.flags = .maskCommand
+        window.displayIfNeeded()
+        window.sendEvent(try #require(NSEvent(cgEvent: cg)))
+    }
+
     private var tallDocument: String { String(repeating: "A paragraph to scroll through.\n\n", count: 80) }
 
-    private func withViewer(fileCount: Int = 3, document: Bool = false, overflow: Bool = false, text: String = "# Test\n\nDocument",
+    private func withViewer(fileCount: Int = 3, document: Bool = false, pdf: Bool = false, overflow: Bool = false, text: String = "# Test\n\nDocument",
                             imageHeight: Int = 1000,
                             allowComparison: Bool = false, on targetScreen: NSScreen? = nil,
                             _ body: (Viewer, ViewerWindow) async throws -> Void) async throws {
         _ = NSApplication.shared
-        let ext = document ? "md" : "png"
+        let ext = pdf ? "pdf" : (document ? "md" : "png")
         let item = PeekItem(id: "swipe-test-\(UUID().uuidString)", created: Date(), source: "Test",
                             files: (0..<fileCount).map { PeekFile(name: "\($0).\(ext)", stored: "\($0).\(ext)", original: "") })
         let folder = item.dir.appendingPathComponent("files")
@@ -589,7 +661,18 @@ struct ViewerSwipeTests {
                                                   bytesPerRow: 0, bitsPerPixel: 0))
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         let documentText = overflow ? "```\n\(String(repeating: "long_line_", count: 100))\n```" : text
-        for url in item.urls { try (document ? Data(documentText.utf8) : png).write(to: url) }
+        let data: Data
+        if pdf {
+            let doc = PDFDocument()
+            let pageImage = try #require(NSImage(data: png))
+            let page = try #require(PDFPage(image: pageImage))
+            doc.insert(page, at: 0)
+            doc.insert(try #require(PDFPage(image: pageImage)), at: 1)
+            data = try #require(doc.dataRepresentation())
+        } else {
+            data = document ? Data(documentText.utf8) : png
+        }
+        for url in item.urls { try data.write(to: url) }
         let viewer = Viewer()
         viewer.takesKey = false
         let screen = try #require(targetScreen ?? NSScreen.main)

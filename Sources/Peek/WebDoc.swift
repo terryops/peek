@@ -125,8 +125,9 @@ final class WebDocView: WKWebView, WKNavigationDelegate, WKUIDelegate {
 
     func zoom(_ action: ZoomImageView.Action) {
         switch action {
-        case .fit: pageZoom = 1
-        case .actual: pageZoom = 1
+        case .fit, .actual:
+            magnification = 1
+            pageZoom = 1
         case .zoomIn: pageZoom = min(3, pageZoom * 1.15)
         case .zoomOut: pageZoom = max(0.4, pageZoom / 1.15)
         }

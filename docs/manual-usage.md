@@ -102,6 +102,7 @@ Global shortcuts use Carbon hotkeys and require no Accessibility permission:
 | `⌥↑` `⌥↓` | Viewer | Previous / next card |
 | `⌘D` | Viewer | Toggle side-by-side comparison |
 | `⌘0` / `⌘1` / `⌘±` | Viewer | Fit to window / 1:1 pixels / zoom |
+| `⌘` + mouse wheel | Image, PDF, Markdown, HTML | Zoom in or out at the pointer |
 | `⌘C` / `⌘R` / `↩` | Viewer | Copy / reveal in Finder / jump to the originating local Rex session |
 | `?` | Viewer | Toggle shortcut cheat sheet |
 

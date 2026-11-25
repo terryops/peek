@@ -575,6 +575,31 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         return acceptsWheelNavigation
     }
 
+    func zoomWithWheel(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command,
+              !help.visible, let view = displayedContent, let window,
+              view is ZoomImageView || view is WebDocView || view is PDFView else { return false }
+        let location = event.window == nil ? window.convertPoint(fromScreen: event.locationInWindow) : event.locationInWindow
+        let point = view.convert(location, from: nil)
+        guard view.visibleRect.contains(point) else { return false }
+        // A precise wheel reports pixels; a traditional wheel reports detents.
+        let delta = event.scrollingDeltaY * (event.isDirectionInvertedFromDevice ? -1 : 1)
+        guard event.momentumPhase.isEmpty, delta.isFinite, delta != 0 else { return true }
+        let exponent = delta * (event.hasPreciseScrollingDeltas ? 0.01 : 0.18)
+        let factor = exp(min(1, max(-1, exponent)))
+        if let image = view as? ZoomImageView {
+            image.zoom(by: factor, at: point)
+        } else if let web = view as? WebDocView {
+            let scale = min(5, max(0.4, web.magnification * factor))
+            // WebKit applies this viewport translation before scaling its scroll position.
+            let offset = web.magnification / scale - 1
+            web.setMagnification(scale, centeredAt: NSPoint(x: point.x * offset, y: point.y * offset))
+        } else if let pdf = view as? PDFView {
+            pdf.zoom(by: factor, at: point)
+        }
+        return true
+    }
+
     func zoom(_ action: ZoomImageView.Action) {
         window?.cancelSwipeTracking()
         cancelSwipeAnimation()
@@ -584,6 +609,14 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
         (main as? ZoomImageView)?.perform(action)
         (displayedContent as? WebDocView)?.zoom(action)
+        if let pdf = displayedContent as? PDFView {
+            switch action {
+            case .fit: pdf.autoScales = true
+            case .actual: pdf.scaleFactor = 1
+            case .zoomIn: pdf.zoomIn(nil)
+            case .zoomOut: pdf.zoomOut(nil)
+            }
+        }
     }
 
     func toggleCompare() {
@@ -853,7 +886,13 @@ final class ViewerWindow: NSPanel {
             cancelSwipeTracking()
             viewer?.cancelSwipeAnimation()
         }
-        if event.type == .scrollWheel, handleWheel(event) || handleSwipe(event) { return }
+        if event.type == .scrollWheel {
+            if viewer?.zoomWithWheel(event) == true {
+                cancelSwipeTracking()
+                return
+            }
+            if handleWheel(event) || handleSwipe(event) { return }
+        }
         super.sendEvent(event)
     }
 
@@ -1024,6 +1063,23 @@ private struct CopyFeedback: View {
     }
 }
 
+private extension PDFView {
+    func zoom(by factor: CGFloat, at point: NSPoint) {
+        guard let page = page(for: point, nearest: true),
+              let scroll = documentView?.enclosingScrollView else { return }
+        let anchor = convert(point, to: page)
+        autoScales = false
+        scaleFactor = min(maxScaleFactor, max(minScaleFactor, scaleFactor * factor))
+        layoutDocumentView()
+        let clip = scroll.contentView
+        let original = clip.convert(point, from: self)
+        let scaled = clip.convert(convert(anchor, from: page), from: self)
+        let bounds = clip.bounds.offsetBy(dx: scaled.x - original.x, dy: scaled.y - original.y)
+        clip.scroll(to: clip.constrainBoundsRect(bounds).origin)
+        scroll.reflectScrolledClipView(clip)
+    }
+}
+
 // MARK: - zoomable image
 
 /// Pinch / ⌘± to zoom, double-click toggles fit ↔ 1:1 pixels, stays centered.
@@ -1088,6 +1144,11 @@ final class ZoomImageView: NSScrollView {
 
     // AppKit can lay out the scroll view between updates of the same pinch.
     @objc private func willMagnify() { fitting = false }
+
+    func zoom(by factor: CGFloat, at point: NSPoint) {
+        fitting = false
+        setMagnification(magnification * factor, centeredAt: contentView.convert(point, from: self))
+    }
 
     override func layout() {
         super.layout()
@@ -1369,6 +1430,7 @@ struct ShortcutSheet: View {
             ("⌘W  ⌘⌫", L10n.tr("关闭并收走这张卡", "Close & dismiss card")),
             ("⌘0  ⌘1", L10n.tr("适应窗口 / 原始像素", "Fit to window / 1:1 pixels")),
             ("⌘=  ⌘-", L10n.tr("放大 / 缩小", "Zoom in / out")),
+            (L10n.tr("⌘ + 滚轮", "⌘ + Wheel"), L10n.tr("在指针处缩放图片或文档", "Zoom image or document at pointer")),
         ]
         if m.canJump { rows.append(("↩", L10n.tr("回到对话", "Jump to session"))) }
         return rows

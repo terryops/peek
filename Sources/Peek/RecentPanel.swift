@@ -44,7 +44,17 @@ final class RecentPanel: NSPanel {
         layout(on: screen)
         makeFirstResponder(self)
         makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        // An accessory app can order a window front without receiving keyboard focus.
+        if !NSApp.isActive, Bundle.main.bundleURL.pathExtension == "app" {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            config.addsToRecentItems = false
+            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { [weak self] _, error in
+                if error != nil, self?.isVisible == true { NSApp.activate() }
+            }
+        } else {
+            NSApp.activate()
+        }
     }
 
     func update(_ history: [PeekItem]) {
