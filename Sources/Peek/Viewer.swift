@@ -220,14 +220,15 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
         return win
     }
 
-    /// Fits the current content into ~80% of the screen at 1:1 pixels or smaller.
+    /// Centers a content-sized detail window within the usable area of its display.
     private func idealFrame(on screen: NSScreen) -> NSRect {
         let vf = screen.visibleFrame
         let scale = screen.backingScaleFactor
-        let maxW = vf.width * 0.8, maxH = vf.height * 0.88
+        let preferredScale: CGFloat = 1.07
+        let maxW = vf.width * 0.86, maxH = vf.height * 0.94
         let sidebar = showStrip && maxW >= Self.sidebarBreakpoint
         let chrome: CGFloat = 52 + (showStrip && !sidebar ? 84 : 0)
-        var size = NSSize(width: maxW * 0.75, height: maxH * 0.8)
+        var size = NSSize(width: vf.width * 0.60, height: vf.height * 0.70)
         if let item, !compare, WebDoc.isWeb(item.urls[index]) || item.urls[index].pathExtension.lowercased() == "pdf" {
             let w: CGFloat = WebDoc.isMarkdown(item.urls[index]) ? 920 : 1240
             size = NSSize(width: w, height: vf.height * 0.86)
@@ -239,9 +240,9 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate {
             let w = sizes.reduce(0) { $0 + $1.width * (h / max($1.height, 1)) }
             size = NSSize(width: w / scale + CGFloat(sizes.count + 1) * 16, height: h / scale + chrome)
         }
-        let k = min(1, maxW / size.width, maxH / size.height)
-        let w = max(sidebar ? min(800, maxW) : 560, size.width * k)
-        let h = max(sidebar ? min(520, maxH) : 400, size.height * k)
+        let k = min(preferredScale, maxW / size.width, maxH / size.height)
+        let w = min(maxW, max((sidebar ? 800 : 560) * preferredScale, size.width * k))
+        let h = min(maxH, max((sidebar ? 520 : 400) * preferredScale, size.height * k))
         return NSRect(x: vf.midX - w / 2, y: vf.midY - h / 2, width: w, height: h).integral
     }
 
