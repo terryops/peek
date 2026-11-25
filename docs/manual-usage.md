@@ -92,7 +92,7 @@ Global shortcuts use Carbon hotkeys and require no Accessibility permission:
 | --- | --- | --- |
 | `⌥⌘P` | Global | Open the newest card in the viewer |
 | `⌥4` | Global | Open the six most recent Peeks. Press again in the overview to close it |
-| Arrow keys / `↩` / `Esc` | Recent Peeks | Select a card / open its preview / close the overview |
+| Arrow keys / `↩` / `Esc` or `⌘W` | Recent Peeks | Select a card / open its preview / close the overview. Unread cards are marked until opened |
 | `⌃⌥H` | Global | Tuck or restore card stack |
 | `⌃⌥X` | Global | Dismiss all cards |
 | `⎋` / `Space` | Viewer | Close the detail. Previews opened from Recent Peeks return to the overview with the same card selected |

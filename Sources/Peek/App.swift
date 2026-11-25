@@ -384,6 +384,7 @@ final class App: NSObject, NSApplicationDelegate {
             "items": items.count,
             "unread": items.filter { !$0.seen }.count,
             "menu": menu.snapshot(),
+            "recentVisible": recentPanel?.isVisible == true,
             "pid": ProcessInfo.processInfo.processIdentifier,
             "mouse": NSStringFromPoint(NSEvent.mouseLocation),
             "viewer": Viewer.shared.snapshot(),

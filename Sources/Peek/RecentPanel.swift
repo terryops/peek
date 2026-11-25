@@ -42,8 +42,9 @@ final class RecentPanel: NSPanel {
         items = Array(history.prefix(Self.limit))
         if !isVisible || !items.contains(where: { $0.id == selectedID }) { selectedID = items.first?.id }
         layout(on: screen)
-        NSApp.activate()
+        makeFirstResponder(self)
         makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     func update(_ history: [PeekItem]) {
@@ -100,14 +101,37 @@ final class RecentPanel: NSPanel {
         }
     }
 
+    private func handleCloseShortcut(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let isEscape = modifiers.isEmpty && event.keyCode == 53
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let isCommandW = modifiers == .command && (key == "w" || (key.isEmpty && event.keyCode == 13))
+        guard isEscape || isCommandW else { return false }
+        if !event.isARepeat { close() }
+        return true
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let targetsOverview = event.window.map { $0 === self } ?? isKeyWindow
+        return (targetsOverview && handleCloseShortcut(event)) || super.performKeyEquivalent(with: event)
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        guard isVisible, NSApp.keyWindow == nil || NSApp.keyWindow === self else { return }
+        if let event = NSApp.currentEvent, event.type == .keyDown, event.isARepeat { return }
+        close()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if !handleCloseShortcut(event) { super.keyDown(with: event) }
+    }
+
     override func sendEvent(_ event: NSEvent) {
+        if handleCloseShortcut(event) { return }
         guard event.type == .keyDown,
               event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else {
             return super.sendEvent(event)
-        }
-        if event.keyCode == 53 {
-            if !event.isARepeat { close() }
-            return
         }
         guard let index = items.firstIndex(where: { $0.id == selectedID }) else { return super.sendEvent(event) }
         let next: Int
@@ -177,10 +201,20 @@ private struct RecentTile: View {
             VStack(alignment: .leading, spacing: 4) {
                 PreviewPane(images: thumbs, count: item.files.count)
                     .accessibilityHidden(true)
-                Text(item.displayTitle)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                HStack(spacing: 5) {
+                    Text(item.displayTitle)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if !item.seen {
+                        Text(L10n.tr("未读", "Unread"))
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.blue.opacity(0.16), in: Capsule())
+                            .fixedSize()
+                    }
+                }
                 HStack {
                     Text(item.conversationTitle).lineLimit(1)
                     Spacer(minLength: 4)

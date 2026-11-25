@@ -81,6 +81,26 @@ struct RecentPanelTests {
         #expect(!panel.isVisible)
     }
 
+    @Test func closeShortcutsWorkThroughAppKitWithAndWithoutCards() throws {
+        _ = NSApplication.shared
+        let panel = RecentPanel { _, _ in Issue.record("Closing the overview opened a card") }
+        defer { panel.close() }
+        let item = PeekItem(id: "close-test", created: Date(), source: "Test", files: [])
+        for history in [[], [item]] {
+            panel.present(history)
+            let heldEscape = try key(53, in: panel, text: "\u{1b}", repeatKey: true)
+            #expect(panel.performKeyEquivalent(with: heldEscape))
+            #expect(panel.isVisible)
+            let commandW = try key(13, in: panel, text: "w", modifiers: .command)
+            #expect(panel.performKeyEquivalent(with: commandW))
+            #expect(!panel.isVisible)
+
+            panel.present(history)
+            panel.cancelOperation(nil)
+            #expect(!panel.isVisible)
+        }
+    }
+
     @Test func escapeFromDetailReturnsToTheSameOverviewAndSelection() async throws {
         _ = NSApplication.shared
         let file = PeekFile(name: "note.txt", stored: "note.txt", original: "")
@@ -121,9 +141,13 @@ struct RecentPanelTests {
     }
 
     private func press(_ code: UInt16, in window: NSWindow) throws {
-        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+        window.sendEvent(try key(code, in: window))
+    }
+
+    private func key(_ code: UInt16, in window: NSWindow, text: String = "",
+                     modifiers: NSEvent.ModifierFlags = [], repeatKey: Bool = false) throws -> NSEvent {
+        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-            characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
-        window.sendEvent(event)
+            characters: text, charactersIgnoringModifiers: text, isARepeat: repeatKey, keyCode: code))
     }
 }

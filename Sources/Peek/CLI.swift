@@ -2,7 +2,7 @@ import AppKit
 
 enum CLI {
     static var versionString: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?.nonEmpty ?? "1.3.1"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?.nonEmpty ?? "1.4.1"
     }
 
     static var usage: String {
