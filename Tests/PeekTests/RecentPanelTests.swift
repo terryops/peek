@@ -52,7 +52,7 @@ struct RecentPanelTests {
     @Test func opensFromTheSixMostRecentPushesIncludingDismissedCards() throws {
         _ = NSApplication.shared
         var opened: String?
-        let panel = RecentPanel { id, _ in opened = id }
+        let panel = RecentPanel(dismissAllCards: {}) { id, _ in opened = id }
         defer { panel.close() }
         let history = (0..<8).map { index in
             PeekItem(id: "recent-\(index)", created: Date().addingTimeInterval(-Double(index)),
@@ -83,21 +83,34 @@ struct RecentPanelTests {
 
     @Test func closeShortcutsWorkThroughAppKitWithAndWithoutCards() throws {
         _ = NSApplication.shared
-        let panel = RecentPanel { _, _ in Issue.record("Closing the overview opened a card") }
+        var dismissals = 0
+        let panel = RecentPanel(dismissAllCards: { dismissals += 1 }) { _, _ in
+            Issue.record("Closing the overview opened a card")
+        }
         defer { panel.close() }
         let item = PeekItem(id: "close-test", created: Date(), source: "Test", files: [])
         for history in [[], [item]] {
+            let previousDismissals = dismissals
             panel.present(history)
             let heldEscape = try key(53, in: panel, text: "\u{1b}", repeatKey: true)
             #expect(panel.performKeyEquivalent(with: heldEscape))
             #expect(panel.isVisible)
+            let heldCommandW = try key(13, in: panel, text: "w", modifiers: .command, repeatKey: true)
+            #expect(panel.performKeyEquivalent(with: heldCommandW))
+            #expect(panel.isVisible)
+            #expect(dismissals == previousDismissals)
             let commandW = try key(13, in: panel, text: "w", modifiers: .command)
             #expect(panel.performKeyEquivalent(with: commandW))
             #expect(!panel.isVisible)
+            #expect(dismissals == previousDismissals + 1)
 
+            panel.present(history)
+            try press(53, in: panel)
+            #expect(!panel.isVisible)
             panel.present(history)
             panel.cancelOperation(nil)
             #expect(!panel.isVisible)
+            #expect(dismissals == previousDismissals + 1)
         }
     }
 
@@ -115,7 +128,7 @@ struct RecentPanelTests {
         }
         let viewer = Viewer()
         var opened: [String] = []
-        let panel = RecentPanel { id, source in
+        let panel = RecentPanel(dismissAllCards: { Issue.record("Escape dismissed floating cards") }) { id, source in
             opened.append(id)
             if let item = history.first(where: { $0.id == id }) {
                 viewer.show(item, from: source.frame, returningTo: source)

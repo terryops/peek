@@ -249,7 +249,7 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     func showRecentOverview() {
-        let panel = recentPanel ?? RecentPanel { [weak self] id, panel in
+        let panel = recentPanel ?? RecentPanel(dismissAllCards: { [weak self] in self?.dismissAll() }) { [weak self] id, panel in
             self?.open(id, from: panel.frame, returningTo: panel)
         }
         recentPanel = panel

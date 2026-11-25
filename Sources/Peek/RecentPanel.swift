@@ -11,6 +11,7 @@ final class RecentPanel: NSPanel {
         return unread.count == 1 ? unread.first : nil
     }
 
+    private let dismissAllCards: () -> Void
     private let openCard: (String, RecentPanel) -> Void
     private var previousApplication: NSRunningApplication?
     private var items: [PeekItem] = []
@@ -18,7 +19,8 @@ final class RecentPanel: NSPanel {
     private var columns = 1
     private var host: NSHostingView<RecentGrid>?
 
-    init(openCard: @escaping (String, RecentPanel) -> Void) {
+    init(dismissAllCards: @escaping () -> Void, openCard: @escaping (String, RecentPanel) -> Void) {
+        self.dismissAllCards = dismissAllCards
         self.openCard = openCard
         super.init(contentRect: .zero, styleMask: [.titled, .closable],
                    backing: .buffered, defer: false)
@@ -112,13 +114,15 @@ final class RecentPanel: NSPanel {
     }
 
     private func handleCloseShortcut(_ event: NSEvent) -> Bool {
-        guard event.type == .keyDown else { return false }
+        guard isVisible, event.type == .keyDown else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let isEscape = modifiers.isEmpty && event.keyCode == 53
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
         let isCommandW = modifiers == .command && (key == "w" || (key.isEmpty && event.keyCode == 13))
         guard isEscape || isCommandW else { return false }
-        if !event.isARepeat { close() }
+        guard !event.isARepeat else { return true }
+        close()
+        if isCommandW { dismissAllCards() }
         return true
     }
 
