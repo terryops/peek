@@ -152,7 +152,6 @@ final class App: NSObject, NSApplicationDelegate {
         guard var item = item(id),
               item.urls.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return false }
         if dryRun { log("open \(item.urls.map(\.lastPathComponent))") }
-        cards.cancelPreviewRetraction(id)
         Viewer.shared.show(item, from: rect, returningTo: window)
         item.seen = true
         item.lastOpened = Date()
@@ -365,8 +364,7 @@ final class App: NSObject, NSApplicationDelegate {
                 viewer.updateSwipe(CGFloat(dx))
                 let action = parts.count > 2 ? parts[2] : "end"
                 if action != "hold" {
-                    let commit = action != "cancel" && abs(dx) >= 64
-                    viewer.finishSwipe(commit ? (dx < 0 ? 1 : -1) : nil)
+                    viewer.releaseSwipe(CGFloat(dx), cancelled: action == "cancel")
                 }
             }
         case "viewer-compare": Viewer.shared.toggleCompare()

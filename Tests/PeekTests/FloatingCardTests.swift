@@ -2,6 +2,7 @@ import AppKit
 import Testing
 @testable import Peek
 
+@Suite(.serialized)
 @MainActor
 struct FloatingCardTests {
     @Test func unopenedCardTucksEvenWhenHoveredAndItsHandleSurvivesRelayout() async throws {
@@ -100,6 +101,54 @@ struct FloatingCardTests {
         #expect(delivered.panel.frame.maxX == screen.visibleFrame.maxX - CardMetrics.edge)
         #expect(delivered.panel.frame.maxY == screen.visibleFrame.maxY - CardMetrics.top)
         #expect(!delivered.panel.isKeyWindow)
+    }
+
+    @Test func closingPreviewImmediatelyDismissesCard() async throws {
+        _ = NSApplication.shared
+        let app = App()
+        app.cards.app = app
+        let viewer = Viewer()
+        viewer.app = app
+        viewer.takesKey = false
+
+        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+            NSColor.systemGreen.setFill()
+            rect.fill()
+            return true
+        }
+        let file = PeekFile(name: "close-fast.tiff", stored: "close-fast.tiff", original: "")
+        let item = PeekItem(id: UUID().uuidString, created: Date(), source: "Test", files: [file])
+        defer {
+            app.cards.sync([])
+            Thumbs.forget(item.id)
+            try? FileManager.default.removeItem(at: item.dir)
+        }
+        let data = try #require(image.tiffRepresentation)
+        let url = try #require(item.urls.first)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url)
+        try Store.save(item)
+        await withCheckedContinuation { continuation in
+            Thumbs.load(item) { _ in continuation.resume() }
+        }
+
+        app.reload()
+        let card = try #require(app.cards.cards.first { $0.id == item.id })
+        viewer.show(item, from: card.targetFrame)
+        let window = try #require(NSApp.windows.compactMap { $0 as? ViewerWindow }.first { $0.viewer === viewer })
+        defer { window.close() }
+        window.becomeKey()
+        #expect(!card.panel.isVisible)
+
+        let started = ContinuousClock.now
+        viewer.close()
+        try await waitForPanelAnimation { !window.isVisible && !viewer.isOpen }
+        let elapsed = ContinuousClock.now - started
+
+        #expect(elapsed < .seconds(1))
+        #expect(!app.cards.cards.contains { $0.id == item.id })
+        #expect(app.items.first { $0.id == item.id }?.dismissed == true)
+        #expect(!card.panel.isVisible)
     }
 }
 

@@ -112,6 +112,20 @@ final class WebDocView: WKWebView, WKNavigationDelegate, WKUIDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    func pauseMedia() {
+        pauseAllMediaPlayback(completionHandler: nil)
+        closeAllMediaPresentations(completionHandler: nil)
+    }
+
+    func teardown() {
+        pauseMedia()
+        setAllMediaPlaybackSuspended(true, completionHandler: nil)
+        stopLoading()
+        navigationDelegate = nil
+        uiDelegate = nil
+        configuration.userContentController.removeAllScriptMessageHandlers(from: .world(name: "PeekScroll"))
+    }
+
     func acceptsVerticalPaging(towardNext: Bool) -> Bool {
         guard magnification <= 1, let verticalPaging else { return false }
         return towardNext ? verticalPaging.next : verticalPaging.previous
@@ -218,7 +232,9 @@ final class WebSnapshot: NSObject, WKNavigationDelegate {
                           styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
-        web = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: WKWebViewConfiguration())
+        let cfg = WKWebViewConfiguration()
+        cfg.mediaTypesRequiringUserActionForPlayback = .all
+        web = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: cfg)
         self.done = done
         super.init()
         window.contentView = web
@@ -249,7 +265,9 @@ final class WebSnapshot: NSObject, WKNavigationDelegate {
         let cb = done
         done = nil
         cb?(img)
+        web.stopLoading()
         web.navigationDelegate = nil
+        window.contentView = nil
         window.close()
         WebSnapshot.live.remove(self)
     }

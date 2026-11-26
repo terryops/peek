@@ -82,6 +82,39 @@ struct ViewerSwipeTests {
         }
     }
 
+    @Test func fittedSmallImageTracksWindowSizeBeyondActualPixels() async throws {
+        try await withViewer(fileCount: 1, imageWidth: 32, imageHeight: 16) { viewer, window in
+            let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
+            let document = try #require(image.documentView)
+            for width: CGFloat in [560, 900, 640] {
+                window.setContentSize(NSSize(width: width, height: 600))
+                window.displayIfNeeded()
+                let rendered = document.convert(document.bounds, to: nil)
+                let viewport = image.convert(image.bounds, to: nil)
+                #expect(abs(rendered.width - (viewport.width - 32)) < 1)
+                #expect(abs(rendered.height * 2 - rendered.width) < 1)
+                #expect(abs(rendered.midX - viewport.midX) < 1)
+                #expect(abs(rendered.midY - viewport.midY) < 1)
+            }
+            viewer.zoom(.actual)
+            try await Task.sleep(for: .milliseconds(400))
+            #expect(image.magnification == 1)
+            viewer.zoom(.fit)
+            try await Task.sleep(for: .milliseconds(400))
+            #expect(abs(document.convert(document.bounds, to: nil).width - (image.bounds.width - 32)) < 1)
+            let fitted = image.magnification
+            let tap = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: image.convert(
+                NSPoint(x: image.bounds.midX, y: image.bounds.midY), to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 2, pressure: 1))
+            image.smartMagnify(with: tap)
+            try await Task.sleep(for: .milliseconds(400))
+            #expect(abs(image.magnification - fitted * 2) < 0.001)
+            image.smartMagnify(with: tap)
+            try await Task.sleep(for: .milliseconds(400))
+            #expect(abs(image.magnification - fitted) < 0.001)
+        }
+    }
+
     @Test func zoomedPortraitStaysBetweenToolbarAndNavigation() async throws {
         for fileCount in [1, 2] {
             try await withViewer(fileCount: fileCount, imageHeight: 6400) { viewer, window in
@@ -155,49 +188,77 @@ struct ViewerSwipeTests {
         }
     }
 
-    @Test func mouseWheelMovesBetweenImagesAndWraps() async throws {
+    private func wheel(_ window: ViewerWindow, ticks: Int, direction: Int32 = 1, at start: TimeInterval) {
+        for i in 0..<ticks {
+            scroll(window, x: 0, y: direction, phase: [], precise: false, timestamp: start + Double(i) * 0.04)
+        }
+    }
+
+    private func wrapHint(in window: ViewerWindow) -> NSView? {
+        window.contentView?.subviews.first { $0.identifier?.rawValue == "wrapFeedback" }
+    }
+
+    @Test func wheelRequiresMoreTravelAtTheEndsAndShowsProgressBeforeWrapping() async throws {
         try await withViewer { viewer, window in
-            scroll(window, x: 0, y: 1, phase: [], precise: false, timestamp: 100)
-            #expect(viewer.snapshot()["index"] as? Int == 1)
-            scroll(window, x: 0, y: -1, phase: [], precise: false, timestamp: 100.01)
+            wheel(window, ticks: 2, at: 10)
             #expect(viewer.snapshot()["index"] as? Int == 0)
-            scroll(window, x: 0, y: -1, phase: [], precise: false, timestamp: 100.3)
-            #expect(viewer.snapshot()["index"] as? Int == 2)
-        }
-    }
-
-    @Test func wheelBurstDoesNotSkipImages() async throws {
-        try await withViewer { viewer, window in
-            for time in [10.0, 10.02, 10.08] {
-                scroll(window, x: 0, y: 3, phase: [], precise: false, timestamp: time)
-            }
+            wheel(window, ticks: 1, at: 10.1)
             #expect(viewer.snapshot()["index"] as? Int == 1)
-            scroll(window, x: 0, y: 3, phase: [], precise: false, timestamp: 10.3)
+            wheel(window, ticks: 3, at: 11)
+            #expect(viewer.snapshot()["index"] as? Int == 2)
+            wheel(window, ticks: 3, at: 12)
+            #expect(viewer.snapshot()["index"] as? Int == 2)
+            #expect(wrapHint(in: window) != nil)
+            wheel(window, ticks: 3, at: 12.2)
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+            wheel(window, ticks: 3, direction: -1, at: 13)
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+            wheel(window, ticks: 3, direction: -1, at: 13.2)
             #expect(viewer.snapshot()["index"] as? Int == 2)
         }
     }
 
-    @Test func highResolutionMouseWheelChangesImagesWithoutGesturePhases() async throws {
+    @Test func wheelDiscardsIdleAndReversedInputAndConsumesTheTailOfABurst() async throws {
         try await withViewer { viewer, window in
-            scroll(window, x: 0, y: 30, phase: [], precise: true)
+            wheel(window, ticks: 2, at: 10)
+            wheel(window, ticks: 1, at: 11)
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+            wheel(window, ticks: 2, direction: -1, at: 11.1)
+            wheel(window, ticks: 2, at: 11.2)
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+            #expect(wrapHint(in: window) == nil)
+            wheel(window, ticks: 6, at: 11.3)
+            #expect(viewer.snapshot()["index"] as? Int == 1)
+            wheel(window, ticks: 6, at: 11.54)
+            #expect(viewer.snapshot()["index"] as? Int == 2)
+        }
+    }
+
+    @Test func highResolutionMouseWheelAccumulatesPixelDistance() async throws {
+        try await withViewer { viewer, window in
+            for i in 0..<3 {
+                scroll(window, x: 0, y: 30, phase: [], timestamp: 10 + Double(i) * 0.04)
+                #expect(viewer.snapshot()["index"] as? Int == 0)
+            }
+            scroll(window, x: 0, y: 30, phase: [], timestamp: 10.13)
             #expect(viewer.snapshot()["index"] as? Int == 1)
         }
     }
 
     @Test func wheelPreservesDocumentAndZoomedImageScrolling() async throws {
         try await withViewer(document: true) { viewer, window in
-            scroll(window, x: 0, y: 3, phase: [], precise: false)
+            wheel(window, ticks: 3, at: 20)
             #expect(viewer.snapshot()["index"] as? Int == 0)
         }
         try await withViewer { viewer, window in
             let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
             image.magnification = 4
             image.layoutSubtreeIfNeeded()
-            scroll(window, x: 0, y: 3, phase: [], precise: false)
+            wheel(window, ticks: 3, at: 20)
             #expect(viewer.snapshot()["index"] as? Int == 0)
             image.magnification = image.minMagnification
             image.layoutSubtreeIfNeeded()
-            scroll(window, x: 0, y: 3, phase: [], precise: false)
+            wheel(window, ticks: 3, at: 20)
             #expect(viewer.snapshot()["index"] as? Int == 1)
         }
     }
@@ -205,16 +266,16 @@ struct ViewerSwipeTests {
     @Test func wheelDoesNotNavigateComparisonHelpOrSingleFiles() async throws {
         try await withViewer { viewer, window in
             viewer.toggleCompare()
-            scroll(window, x: 0, y: 3, phase: [], precise: false)
+            wheel(window, ticks: 3, at: 20)
             #expect(viewer.snapshot()["compare"] as? Bool == true)
             #expect(viewer.snapshot()["index"] as? Int == 0)
             viewer.toggleCompare()
             viewer.toggleHelp()
-            scroll(window, x: 0, y: 3, phase: [], precise: false)
+            wheel(window, ticks: 3, at: 20)
             #expect(viewer.snapshot()["index"] as? Int == 0)
         }
         try await withViewer(fileCount: 1) { viewer, window in
-            scroll(window, x: 0, y: 3, phase: [], precise: false)
+            wheel(window, ticks: 3, at: 20)
             #expect(viewer.snapshot()["index"] as? Int == 0)
         }
     }
@@ -234,7 +295,7 @@ struct ViewerSwipeTests {
             image.layoutSubtreeIfNeeded()
             #expect(viewer.acceptsSwipeNavigation)
             #expect(!viewer.acceptsWheelNavigation)
-            scroll(window, x: 0, y: 3, phase: [], precise: false)
+            wheel(window, ticks: 3, at: 20)
             #expect(viewer.snapshot()["index"] as? Int == 0)
         }
     }
@@ -353,7 +414,43 @@ struct ViewerSwipeTests {
             swipe(window, x: 100)
             #expect(viewer.snapshot()["index"] as? Int == 0)
             swipe(window, x: 100)
+            #expect(viewer.snapshot()["index"] as? Int == 0)
+            swipe(window, x: 205)
             #expect(viewer.snapshot()["index"] as? Int == 2)
+        }
+    }
+
+    @Test func trackpadRequiresLongerTravelAndShowsTheWrapHintOnBothAxes() async throws {
+        for horizontal in [true, false] {
+            try await withViewer { viewer, window in
+                @MainActor func drag(_ distance: Int32, phase: NSEvent.Phase) {
+                    scroll(window, x: horizontal ? -distance : 0, y: horizontal ? 0 : distance, phase: phase)
+                }
+                drag(0, phase: .began)
+                drag(75, phase: .changed)
+                drag(0, phase: .ended)
+                #expect(viewer.snapshot()["index"] as? Int == 0)
+                viewer.step(-1)
+                drag(0, phase: .began)
+                drag(110, phase: .changed)
+                #expect(viewer.snapshot()["index"] as? Int == 2)
+                let hint = try #require(wrapHint(in: window))
+                drag(0, phase: .ended)
+                #expect(viewer.snapshot()["index"] as? Int == 2)
+                #expect(hint.superview === window.contentView)
+                drag(0, phase: .began)
+                drag(220, phase: .changed)
+                drag(0, phase: .cancelled)
+                #expect(viewer.snapshot()["index"] as? Int == 2)
+                #expect(wrapHint(in: window) == nil)
+                drag(0, phase: .began)
+                drag(220, phase: .changed)
+                drag(0, phase: .ended)
+                #expect(viewer.snapshot()["index"] as? Int == 0)
+                if !Anim.reduceMotion {
+                    #expect(window.contentView?.subviews.contains { $0.layer?.animation(forKey: "viewerSwipe") != nil } == true)
+                }
+            }
         }
     }
 
@@ -460,7 +557,7 @@ struct ViewerSwipeTests {
         try await withViewer { viewer, window in
             scroll(window, x: 0, phase: .mayBegin)
             scroll(window, x: -30, phase: .began)
-            scroll(window, x: -40, phase: .changed)
+            scroll(window, x: -70, phase: .changed)
             scroll(window, x: 0, phase: .ended)
             #expect(viewer.snapshot()["index"] as? Int == 1)
         }
@@ -645,7 +742,7 @@ struct ViewerSwipeTests {
     private var tallDocument: String { String(repeating: "A paragraph to scroll through.\n\n", count: 80) }
 
     private func withViewer(fileCount: Int = 3, document: Bool = false, pdf: Bool = false, overflow: Bool = false, text: String = "# Test\n\nDocument",
-                            imageHeight: Int = 1000,
+                            imageWidth: Int = 1600, imageHeight: Int = 1000,
                             allowComparison: Bool = false, on targetScreen: NSScreen? = nil,
                             _ body: (Viewer, ViewerWindow) async throws -> Void) async throws {
         _ = NSApplication.shared
@@ -655,7 +752,7 @@ struct ViewerSwipeTests {
         let folder = item.dir.appendingPathComponent("files")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: item.dir) }
-        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1600, pixelsHigh: imageHeight,
+        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: imageWidth, pixelsHigh: imageHeight,
                                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                                   isPlanar: false, colorSpaceName: .deviceRGB,
                                                   bytesPerRow: 0, bitsPerPixel: 0))
@@ -723,7 +820,7 @@ struct ViewerSwipeTests {
         // native concurrent tracking, which waits for events in the system queue.
         cg.location = CGPoint(x: -10000, y: -10000)
         cg.flags = []
-        if let timestamp { cg.timestamp = UInt64(timestamp * 1_000_000_000) }
+        cg.timestamp = UInt64((timestamp ?? ProcessInfo.processInfo.systemUptime) * 1_000_000_000)
         // CoreGraphics and AppKit use different raw values for both phase enums.
         let cgPhase: CGScrollPhase?
         switch phase {
