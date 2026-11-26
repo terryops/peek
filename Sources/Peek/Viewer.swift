@@ -24,6 +24,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
     private var previousApplication: NSRunningApplication?
     private weak var sourceWindow: NSWindow?
     private var closeAnimation: UUID?
+    private var closeAfterExitingFullScreen = false
     private var item: PeekItem?
     private var index = 0
     private var compare = false
@@ -68,6 +69,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
             "content": displayedContent.map { String(describing: type(of: $0)) } ?? "-",
             "magnification": (main as? ZoomImageView)?.magnification ?? 0,
             "swipeOffset": swipeOffset,
+            "fullScreen": win.styleMask.contains(.fullScreen),
             "toolbar": win.toolbar?.items.filter { isToolbarItemVisible($0) }.map(\.label) ?? [],
         ]
     }
@@ -83,6 +85,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
         }
         let wasClosing = closeAnimation != nil
         closeAnimation = nil
+        closeAfterExitingFullScreen = false
         let reopenSame = isOpen && self.item?.id == item.id
         self.item = item
         let screen = origin.flatMap { r in NSScreen.screens.first { $0.frame.intersects(r) } } ?? NSScreen.main ?? NSScreen.screens[0]
@@ -109,12 +112,14 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
         } else {
             win.orderFrontRegardless()
         }
-        if !alreadyVisible || !reopenSame || wasClosing {
+        if (!alreadyVisible || !reopenSame || wasClosing) && !win.styleMask.contains(.fullScreen) {
             let duration = alreadyVisible ? 0.32 : (Anim.reduceMotion ? 0.15 : 0.34)
             Anim.run(duration, alreadyVisible ? Anim.outQuint : Anim.outExpo) {
                 win.animator().setFrame(target, display: true)
                 win.animator().alphaValue = 1
             }
+        } else if win.alphaValue < 1 {
+            win.alphaValue = 1
         }
         syncToolbar(win.toolbar)
     }
@@ -127,6 +132,12 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
         }
         win.resetSwipe()
         dismissFeedback()
+        if win.styleMask.contains(.fullScreen) {
+            (main as? ViewerDocumentPage)?.stopMedia()
+            closeAfterExitingFullScreen = true
+            win.toggleFullScreen(nil)
+            return
+        }
         if win.isMiniaturized {
             if let id = item?.id { app?.cards.retractAfterPreview(id) }
             clearContent()
@@ -220,7 +231,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
         win.backgroundColor = NSColor(white: 0.075, alpha: 1)
         win.isMovableByWindowBackground = true
         win.minSize = NSSize(width: 460, height: 340)
-        win.collectionBehavior = [.moveToActiveSpace]
+        win.collectionBehavior = [.moveToActiveSpace, .fullScreenPrimary]
         win.animationBehavior = .none
         win.tabbingMode = .disallowed
 
@@ -292,6 +303,28 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
 
     func windowDidResize(_ notification: Notification) {
         layoutContent()
+    }
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        layoutContent()
+        syncToolbar(window?.toolbar)
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        layoutContent()
+        syncToolbar(window?.toolbar)
+        if closeAfterExitingFullScreen {
+            closeAfterExitingFullScreen = false
+            close()
+        }
+    }
+
+    func windowDidFailToExitFullScreen(_ window: NSWindow) {
+        if closeAfterExitingFullScreen {
+            closeAfterExitingFullScreen = false
+            clearContent()
+            window.orderOut(nil)
+        }
     }
 
     /// Give scrolling content its own viewport between the toolbar and navigation.
@@ -390,8 +423,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
         let ext = url.pathExtension.lowercased()
         if let type = UTType(filenameExtension: ext), type.conforms(to: .movie),
            let mime = type.preferredMIMEType, AVURLAsset.isPlayableExtendedMIMEType(mime) {
-            let video = AVPlayerView()
-            video.controlsStyle = .floating
+            let video = VideoPlayerView()
             video.player = AVPlayer(url: url)
             return ViewerDocumentPage(video)
         }
@@ -708,20 +740,45 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
         guard let item, item.files.count > 1, item.allImages, let win = window else { return }
         compare.toggle()
         reloadContent()
+        guard !win.styleMask.contains(.fullScreen) else { return }
         let screen = win.screen ?? NSScreen.main ?? NSScreen.screens[0]
         Anim.run(0.32, Anim.outQuint) { win.animator().setFrame(idealFrame(on: screen), display: true) }
     }
 
+    func toggleFullScreen() {
+        guard let win = window, win.isVisible, closeAnimation == nil else { return }
+        win.cancelSwipeTracking()
+        cancelSwipeAnimation()
+        win.toggleFullScreen(nil)
+    }
+
     func escape() {
-        if help.visible { toggleHelp() } else { close() }
+        if help.visible {
+            toggleHelp()
+        } else if let win = window, win.styleMask.contains(.fullScreen) {
+            win.toggleFullScreen(nil)
+        } else {
+            close()
+        }
+    }
+
+    fileprivate func noteVideoPointerActivity(_ event: NSEvent) {
+        guard let video = displayedContent as? VideoPlayerView else { return }
+        let point = video.convert(event.locationInWindow, from: nil)
+        if video.bounds.contains(point) {
+            video.revealControls()
+        }
     }
 
     fileprivate func handleVideoKey(_ event: NSEvent) -> Bool {
-        guard [49, 123, 124, 125, 126].contains(event.keyCode),
+        guard [3, 49, 123, 124, 125, 126].contains(event.keyCode),
               event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
               !help.visible, let video = displayedContent as? AVPlayerView else { return false }
         guard closeAnimation == nil, let player = video.player else { return true }
         switch event.keyCode {
+        case 3:
+            guard !event.isARepeat else { return true }
+            toggleFullScreen()
         case 49:
             guard !event.isARepeat else { return true }
             if player.timeControlStatus == .paused {
@@ -851,6 +908,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
     private enum ID {
         static let nav = NSToolbarItem.Identifier("nav")
         static let compare = NSToolbarItem.Identifier("compare")
+        static let fullScreen = NSToolbarItem.Identifier("fullScreen")
         static let copy = NSToolbarItem.Identifier("copy")
         static let share = NSToolbarItem.Identifier("share")
         static let reveal = NSToolbarItem.Identifier("reveal")
@@ -858,7 +916,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, ID.nav, ID.compare, ID.copy, ID.share, ID.reveal, ID.jump]
+        [.flexibleSpace, ID.nav, ID.compare, ID.fullScreen, ID.copy, ID.share, ID.reveal, ID.jump]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -880,6 +938,8 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
             return group
         case ID.compare:
             return button(id, "rectangle.split.2x1", L10n.tr("并排对比", "Compare"), #selector(compareTapped))
+        case ID.fullScreen:
+            return button(id, "arrow.up.left.and.arrow.down.right", L10n.tr("全屏  F", "Full Screen  F"), #selector(fullScreenTapped))
         case ID.copy:
             return button(id, "doc.on.doc", L10n.tr("拷贝  ⌘C", "Copy  ⌘C"), #selector(copyTapped))
         case ID.share:
@@ -942,7 +1002,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
             var wanted: [NSToolbarItem.Identifier] = [.flexibleSpace]
             if multi && !compare { wanted.append(ID.nav) }
             if multi && item?.allImages == true { wanted.append(ID.compare) }
-            wanted.append(contentsOf: [ID.copy, ID.share, ID.reveal])
+            wanted.append(contentsOf: [ID.fullScreen, ID.copy, ID.share, ID.reveal])
             if item?.origin?.canJump ?? false { wanted.append(ID.jump) }
             if toolbar.items.map(\.itemIdentifier) != wanted {
                 while !toolbar.items.isEmpty { toolbar.removeItem(at: 0) }
@@ -966,6 +1026,14 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
             t.label = compare
                 ? L10n.tr("单张查看  ⌘D", "Single View  ⌘D")
                 : L10n.tr("并排对比  ⌘D", "Compare  ⌘D")
+            t.toolTip = t.label
+        case ID.fullScreen:
+            let full = window?.styleMask.contains(.fullScreen) == true
+            t.image = NSImage(systemSymbolName: full ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                              accessibilityDescription: nil)
+            t.label = full
+                ? L10n.tr("退出全屏  ⎋", "Exit Full Screen  ⎋")
+                : L10n.tr("全屏  F", "Full Screen  F")
             t.toolTip = t.label
         case ID.copy:
             t.label = L10n.tr("拷贝  ⌘C", "Copy  ⌘C")
@@ -992,6 +1060,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
 
     @objc private func navTapped(_ sender: NSToolbarItemGroup) { step(sender.selectedIndex == 0 ? -1 : 1) }
     @objc private func compareTapped() { toggleCompare() }
+    @objc private func fullScreenTapped() { toggleFullScreen() }
     @objc private func copyTapped() { copyCurrent() }
     @objc private func revealTapped() { revealCurrent() }
     @objc private func jumpTapped() { jumpBack() }
@@ -1061,12 +1130,15 @@ final class ViewerWindow: NSPanel {
     override func sendEvent(_ event: NSEvent) {
         // WebKit and SwiftUI can otherwise consume arrows before the window sees them.
         if event.type == .keyDown {
-            if handleCloseShortcut(event) || viewer?.handleVideoKey(event) == true { return }
+            if handleCloseShortcut(event) || handleFullScreenShortcut(event) || viewer?.handleVideoKey(event) == true { return }
             if [123, 124, 125, 126].contains(event.keyCode),
                event.modifierFlags.intersection([.command, .control]).isEmpty {
                 keyDown(with: event)
                 return
             }
+        }
+        if [.leftMouseDown, .mouseMoved].contains(event.type) {
+            viewer?.noteVideoPointerActivity(event)
         }
         if [.leftMouseDown, .rightMouseDown, .magnify, .smartMagnify].contains(event.type) {
             cancelSwipeTracking()
@@ -1083,7 +1155,17 @@ final class ViewerWindow: NSPanel {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        handleCloseShortcut(event) || super.performKeyEquivalent(with: event)
+        handleCloseShortcut(event) || handleFullScreenShortcut(event) || super.performKeyEquivalent(with: event)
+    }
+
+    private func handleFullScreenShortcut(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown,
+              event.modifierFlags.intersection([.command, .option, .control, .shift]) == [.command, .control],
+              let viewer else { return false }
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        guard key == "f" || (key.isEmpty && event.keyCode == 3) else { return false }
+        viewer.toggleFullScreen()
+        return true
     }
 
     private func handleCloseShortcut(_ event: NSEvent) -> Bool {
@@ -1208,6 +1290,7 @@ final class ViewerWindow: NSPanel {
         case 8 where cmd: v.copyCurrent()                           // ⌘C
         case 15 where cmd: v.revealCurrent()                        // ⌘R
         case 2 where cmd: v.toggleCompare()                         // ⌘D
+        case 3 where m.isEmpty: v.toggleFullScreen()                // F
         case 51 where cmd: v.close()                               // ⌘⌫
         case 29 where cmd: v.zoom(.fit)                             // ⌘0
         case 18 where cmd: v.zoom(.actual)                          // ⌘1
@@ -1266,10 +1349,128 @@ final class ViewerDocumentPage: NSView {
             ql.close()
         } else if let web = document as? WebDocView {
             web.teardown()
+        } else if let video = document as? VideoPlayerView {
+            video.teardown()
         } else if let video = document as? AVPlayerView {
             video.player?.pause()
             video.player = nil
         }
+    }
+}
+
+/// Auto-hides the floating playback controls when idle and exposes AVKit's full-screen toggle.
+final class VideoPlayerView: AVPlayerView, AVPlayerViewDelegate {
+    var autoHideDelay: TimeInterval = 2.5
+    var mouseExitHideDelay: TimeInterval = 0.35
+    private var hideTimer: Timer?
+    private var pointerTrackingArea: NSTrackingArea?
+    private(set) var isInVideoFullScreen = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        controlsStyle = .floating
+        showsFullScreenToggleButton = true
+        delegate = self
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        hideTimer?.invalidate()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let pointerTrackingArea { removeTrackingArea(pointerTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        pointerTrackingArea = area
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            revealControls()
+        } else {
+            cancelAutoHide()
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        revealControls()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        revealControls()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        revealControls()
+        super.mouseDown(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        scheduleAutoHide(after: mouseExitHideDelay)
+    }
+
+    func revealControls(autoHide: Bool = true) {
+        cancelAutoHide()
+        if controlsStyle != .floating { controlsStyle = .floating }
+        if autoHide && !isInVideoFullScreen {
+            scheduleAutoHide(after: autoHideDelay)
+        }
+    }
+
+    func teardown() {
+        cancelAutoHide()
+        player?.pause()
+        player = nil
+    }
+
+    private func cancelAutoHide() {
+        hideTimer?.invalidate()
+        hideTimer = nil
+    }
+
+    private func scheduleAutoHide(after delay: TimeInterval) {
+        cancelAutoHide()
+        guard !isInVideoFullScreen else { return }
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            self?.hideControlsIfIdle()
+        }
+        hideTimer = timer
+        // Default mode pauses the timer while menus or slider drags are tracking.
+        RunLoop.main.add(timer, forMode: .default)
+    }
+
+    private func hideControlsIfIdle() {
+        hideTimer = nil
+        guard !isInVideoFullScreen else { return }
+        let hasChildPopover = window?.childWindows?.contains(where: \.isVisible) == true
+        if NSEvent.pressedMouseButtons != 0 || window?.attachedSheet != nil || hasChildPopover {
+            scheduleAutoHide(after: autoHideDelay)
+            return
+        }
+        if controlsStyle != .none { controlsStyle = .none }
+    }
+
+    func playerViewWillEnterFullScreen(_ playerView: AVPlayerView) {
+        isInVideoFullScreen = true
+        cancelAutoHide()
+        if controlsStyle != .floating { controlsStyle = .floating }
+    }
+
+    func playerViewDidExitFullScreen(_ playerView: AVPlayerView) {
+        isInVideoFullScreen = false
+        revealControls()
     }
 }
 
@@ -1687,6 +1888,7 @@ struct ShortcutSheet: View {
             ("⌘C", L10n.tr("拷贝", "Copy")),
             ("⌘R", L10n.tr("在访达中显示", "Reveal in Finder")),
             ("⌘D", L10n.tr("并排对比", "Side-by-side compare")),
+            ("F  ⌃⌘F", L10n.tr("全屏 / 退出全屏", "Toggle full screen")),
             ("⌘0  ⌘1", L10n.tr("适应窗口 / 原始像素", "Fit to window / 1:1 pixels")),
             ("⌘=  ⌘-", L10n.tr("放大 / 缩小", "Zoom in / out")),
             (L10n.tr("⌘ + 滚轮", "⌘ + Wheel"), L10n.tr("在指针处缩放图片或文档", "Zoom image or document at pointer")),

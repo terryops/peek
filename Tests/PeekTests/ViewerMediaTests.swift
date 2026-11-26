@@ -56,6 +56,62 @@ struct ViewerMediaTests {
         }
     }
 
+    @Test func videoControlsAutoHideAndExposeFullScreenSupport() async throws {
+        try await withFixture(files: [.video("clip.mp4", seconds: 6)]) { viewer, window, _ in
+            #expect(window.collectionBehavior.contains(.fullScreenPrimary))
+            let toolbar = try #require(viewer.snapshot()["toolbar"] as? [String])
+            let fsLabel = L10n.tr("全屏  F", "Full Screen  F")
+            #expect(toolbar.contains(fsLabel))
+
+            let video = try #require(videoView(in: window) as? VideoPlayerView)
+            #expect(video.showsFullScreenToggleButton)
+            #expect(video.controlsStyle == .floating)
+
+            video.autoHideDelay = 0.15
+            video.mouseExitHideDelay = 0.08
+            video.revealControls()
+            #expect(video.controlsStyle == .floating)
+
+            // Auto-hides when idle even while paused.
+            try await waitUntil(timeout: 1) { video.controlsStyle == .none }
+            #expect(video.controlsStyle == .none)
+
+            // Moving the pointer over the video reveals the floating controls again.
+            let center = video.convert(NSPoint(x: video.bounds.midX, y: video.bounds.midY), to: nil)
+            let moved = try #require(NSEvent.mouseEvent(
+                with: .mouseMoved, location: center, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 0, pressure: 0
+            ))
+            window.sendEvent(moved)
+            #expect(video.controlsStyle == .floating)
+
+            // Leaving the video hides the controls after the short exit delay.
+            let exited = try #require(NSEvent.enterExitEvent(
+                with: .mouseExited, location: .zero, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, trackingNumber: 0, userData: nil
+            ))
+            video.mouseExited(with: exited)
+            try await waitUntil(timeout: 1) { video.controlsStyle == .none }
+            #expect(video.controlsStyle == .none)
+
+            // Entering AVKit video full screen keeps floating controls available and pauses custom auto-hide.
+            video.playerViewWillEnterFullScreen(video)
+            #expect(video.isInVideoFullScreen)
+            #expect(video.controlsStyle == .floating)
+            try await Task.sleep(for: .milliseconds(250))
+            #expect(video.controlsStyle == .floating)
+
+            // Exiting AVKit video full screen resumes auto-hide.
+            video.playerViewDidExitFullScreen(video)
+            #expect(!video.isInVideoFullScreen)
+            #expect(video.controlsStyle == .floating)
+            try await waitUntil(timeout: 1) { video.controlsStyle == .none }
+            #expect(video.controlsStyle == .none)
+        }
+    }
+
     @Test func arrowsSeekAndAdjustVideoVolumeWithoutLeavingTheFile() async throws {
         try await withFixture(files: [.video("clip.mp4", seconds: 18), .image("still.png")]) { viewer, window, _ in
             let video = try #require(videoView(in: window))
