@@ -48,6 +48,8 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
     var isOpen: Bool { window?.isVisible ?? false }
     /// Debug only: open without taking the keyboard.
     var takesKey = true
+    /// Test hook to observe full-screen toggles without animating the system Space.
+    var fullScreenHandler: (() -> Void)?
     func isShowing(_ id: String) -> Bool { isOpen && item?.id == id }
 
     func snapshot() -> [String: Any] {
@@ -749,7 +751,11 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
         guard let win = window, win.isVisible, closeAnimation == nil else { return }
         win.cancelSwipeTracking()
         cancelSwipeAnimation()
-        win.toggleFullScreen(nil)
+        if let fullScreenHandler {
+            fullScreenHandler()
+        } else {
+            win.toggleFullScreen(nil)
+        }
     }
 
     func escape() {
@@ -765,9 +771,26 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
     fileprivate func noteVideoPointerActivity(_ event: NSEvent) {
         guard let video = displayedContent as? VideoPlayerView else { return }
         let point = video.convert(event.locationInWindow, from: nil)
-        if video.bounds.contains(point) {
-            video.revealControls()
+        guard video.bounds.contains(point) else { return }
+        if event.type == .leftMouseDown {
+            video.notePointerPress(at: point)
+        } else {
+            video.notePointerMove(at: point)
         }
+    }
+
+    fileprivate func handleVideoDoubleClick(_ event: NSEvent) -> Bool {
+        guard event.type == .leftMouseDown, event.clickCount == 2,
+              event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+              !help.visible, closeAnimation == nil,
+              !isOverNavigation(event),
+              let video = displayedContent as? VideoPlayerView,
+              !video.isInVideoFullScreen else { return false }
+        let point = video.convert(event.locationInWindow, from: nil)
+        guard video.bounds.contains(point),
+              !video.isInteractiveControl(atWindowPoint: event.locationInWindow) else { return false }
+        toggleFullScreen()
+        return true
     }
 
     fileprivate func handleVideoKey(_ event: NSEvent) -> Bool {
@@ -1137,12 +1160,15 @@ final class ViewerWindow: NSPanel {
                 return
             }
         }
-        if [.leftMouseDown, .mouseMoved].contains(event.type) {
-            viewer?.noteVideoPointerActivity(event)
-        }
         if [.leftMouseDown, .rightMouseDown, .magnify, .smartMagnify].contains(event.type) {
             cancelSwipeTracking()
             viewer?.cancelSwipeAnimation()
+        }
+        if event.type == .leftMouseDown, viewer?.handleVideoDoubleClick(event) == true {
+            return
+        }
+        if [.leftMouseDown, .mouseMoved].contains(event.type) {
+            viewer?.noteVideoPointerActivity(event)
         }
         if event.type == .scrollWheel {
             if viewer?.zoomWithWheel(event) == true {
@@ -1364,6 +1390,7 @@ final class VideoPlayerView: AVPlayerView, AVPlayerViewDelegate {
     var mouseExitHideDelay: TimeInterval = 0.35
     private var hideTimer: Timer?
     private var pointerTrackingArea: NSTrackingArea?
+    private var lastPointerLocation: NSPoint?
     private(set) var isInVideoFullScreen = false
 
     override init(frame frameRect: NSRect) {
@@ -1403,22 +1430,58 @@ final class VideoPlayerView: AVPlayerView, AVPlayerViewDelegate {
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
-        revealControls()
+        notePointerMove(at: convert(event.locationInWindow, from: nil))
     }
 
     override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
-        revealControls()
+        notePointerMove(at: convert(event.locationInWindow, from: nil))
     }
 
     override func mouseDown(with event: NSEvent) {
-        revealControls()
+        notePointerPress(at: convert(event.locationInWindow, from: nil))
         super.mouseDown(with: event)
     }
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
+        lastPointerLocation = nil
         scheduleAutoHide(after: mouseExitHideDelay)
+    }
+
+    func notePointerMove(at pointInView: NSPoint) {
+        // Removing floating controls can synthesize a mouseMoved/mouseEntered at the same point.
+        if controlsStyle == .none, let last = lastPointerLocation,
+           hypot(pointInView.x - last.x, pointInView.y - last.y) < 2 {
+            return
+        }
+        lastPointerLocation = pointInView
+        revealControls()
+    }
+
+    func notePointerPress(at pointInView: NSPoint) {
+        lastPointerLocation = pointInView
+        revealControls()
+    }
+
+    func isInteractiveControl(atWindowPoint locationInWindow: NSPoint) -> Bool {
+        guard let hitPoint = superview?.convert(locationInWindow, from: nil),
+              var view = hitTest(hitPoint) else { return false }
+        while view !== self {
+            if view is NSControl || view is NSVisualEffectView {
+                return true
+            }
+            let className = NSStringFromClass(type(of: view))
+            if className.contains("Control") || className.contains("Button")
+                || className.contains("Slider") || className.contains("Scrubber")
+                || className.contains("Timeline") || className.contains("Volume")
+                || className.contains("Movable") {
+                return true
+            }
+            guard let parent = view.superview else { break }
+            view = parent
+        }
+        return false
     }
 
     func revealControls(autoHide: Bool = true) {
@@ -1451,13 +1514,26 @@ final class VideoPlayerView: AVPlayerView, AVPlayerViewDelegate {
         RunLoop.main.add(timer, forMode: .default)
     }
 
+    private var hasBlockingChildWindow: Bool {
+        window?.childWindows?.contains { child in
+            guard child.isVisible else { return false }
+            let name = NSStringFromClass(type(of: child))
+            return name.contains("Popover") || name.contains("Menu")
+        } == true
+    }
+
     private func hideControlsIfIdle() {
         hideTimer = nil
         guard !isInVideoFullScreen else { return }
-        let hasChildPopover = window?.childWindows?.contains(where: \.isVisible) == true
-        if NSEvent.pressedMouseButtons != 0 || window?.attachedSheet != nil || hasChildPopover {
+        if NSEvent.pressedMouseButtons != 0 || window?.attachedSheet != nil || hasBlockingChildWindow {
             scheduleAutoHide(after: autoHideDelay)
             return
+        }
+        if lastPointerLocation == nil, let window {
+            let point = convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+            if bounds.contains(point) {
+                lastPointerLocation = point
+            }
         }
         if controlsStyle != .none { controlsStyle = .none }
     }
@@ -1888,7 +1964,7 @@ struct ShortcutSheet: View {
             ("⌘C", L10n.tr("拷贝", "Copy")),
             ("⌘R", L10n.tr("在访达中显示", "Reveal in Finder")),
             ("⌘D", L10n.tr("并排对比", "Side-by-side compare")),
-            ("F  ⌃⌘F", L10n.tr("全屏 / 退出全屏", "Toggle full screen")),
+            ("F  ⌃⌘F", m.isVideo ? L10n.tr("全屏 / 退出全屏（也可双击视频）", "Toggle full screen (or double-click video)") : L10n.tr("全屏 / 退出全屏", "Toggle full screen")),
             ("⌘0  ⌘1", L10n.tr("适应窗口 / 原始像素", "Fit to window / 1:1 pixels")),
             ("⌘=  ⌘-", L10n.tr("放大 / 缩小", "Zoom in / out")),
             (L10n.tr("⌘ + 滚轮", "⌘ + Wheel"), L10n.tr("在指针处缩放图片或文档", "Zoom image or document at pointer")),

@@ -112,6 +112,103 @@ struct ViewerMediaTests {
         }
     }
 
+    @Test func videoAutoHideIgnoresNonPopoverChildWindowAndStationaryMouseEvents() async throws {
+        try await withFixture(files: [.video("clip.mp4", seconds: 6)]) { _, window, _ in
+            let video = try #require(videoView(in: window) as? VideoPlayerView)
+            video.autoHideDelay = 0.12
+            video.mouseExitHideDelay = 0.08
+
+            // A non-popover visible child window (like macOS's NSToolbarFullScreenWindow)
+            // must not block auto-hiding the playback controls.
+            let nonPopoverChild = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 40, height: 20),
+                styleMask: [.borderless], backing: .buffered, defer: false
+            )
+            nonPopoverChild.isReleasedWhenClosed = false
+            window.addChildWindow(nonPopoverChild, ordered: .above)
+            defer {
+                window.removeChildWindow(nonPopoverChild)
+                nonPopoverChild.close()
+            }
+            #expect(nonPopoverChild.isVisible)
+
+            let center = video.convert(NSPoint(x: video.bounds.midX, y: video.bounds.midY), to: nil)
+            let firstMove = try #require(NSEvent.mouseEvent(
+                with: .mouseMoved, location: center, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 0, pressure: 0
+            ))
+            window.sendEvent(firstMove)
+            #expect(video.controlsStyle == .floating)
+
+            try await waitUntil(timeout: 1) { video.controlsStyle == .none }
+            #expect(video.controlsStyle == .none)
+
+            // A synthetic mouseMoved at the exact same location after hiding must not re-reveal controls.
+            let stationaryMove = try #require(NSEvent.mouseEvent(
+                with: .mouseMoved, location: center, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 0, pressure: 0
+            ))
+            window.sendEvent(stationaryMove)
+            #expect(video.controlsStyle == .none)
+
+            // Actual pointer movement reveals the controls again.
+            let shifted = NSPoint(x: center.x + 12, y: center.y)
+            let realMove = try #require(NSEvent.mouseEvent(
+                with: .mouseMoved, location: shifted, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 2, clickCount: 0, pressure: 0
+            ))
+            window.sendEvent(realMove)
+            #expect(video.controlsStyle == .floating)
+        }
+    }
+
+    @Test func doubleClickingVideoFrameTogglesFullScreenWithoutAffectingControlsOrImages() async throws {
+        try await withFixture(files: [.video("clip.mp4", seconds: 6), .image("still.png")]) { viewer, window, _ in
+            var toggles = 0
+            viewer.fullScreenHandler = { toggles += 1 }
+            let video = try #require(videoView(in: window) as? VideoPlayerView)
+            let center = video.convert(NSPoint(x: video.bounds.midX, y: video.bounds.midY), to: nil)
+
+            // Single click does not toggle full screen.
+            try click(at: center, count: 1, in: window)
+            #expect(toggles == 0)
+
+            // Double click on video frame toggles full screen.
+            try click(at: center, count: 2, in: window)
+            #expect(toggles == 1)
+
+            // Double click with modifiers does not toggle full screen.
+            try click(at: center, count: 2, modifiers: .command, in: window)
+            #expect(toggles == 1)
+
+            // Double click on an interactive control inside the video view does not toggle full screen.
+            let control = NSButton(frame: NSRect(x: 20, y: 20, width: 80, height: 32))
+            video.addSubview(control)
+            defer { control.removeFromSuperview() }
+            let controlPoint = video.convert(NSPoint(x: 60, y: 36), to: nil)
+            try click(at: controlPoint, count: 2, in: window)
+            #expect(toggles == 1)
+
+            // Double click on the thumbnail sidebar does not toggle full screen.
+            try click(at: NSPoint(x: 40, y: 200), count: 2, in: window)
+            #expect(toggles == 1)
+
+            // Double click while shortcut help is visible does not toggle full screen.
+            viewer.toggleHelp()
+            try click(at: center, count: 2, in: window)
+            #expect(toggles == 1)
+            viewer.toggleHelp()
+
+            // Switching to an image keeps image double-click zoom instead of full screen.
+            viewer.step(1)
+            try click(at: center, count: 2, in: window)
+            #expect(toggles == 1)
+        }
+    }
+
     @Test func arrowsSeekAndAdjustVideoVolumeWithoutLeavingTheFile() async throws {
         try await withFixture(files: [.video("clip.mp4", seconds: 18), .image("still.png")]) { viewer, window, _ in
             let video = try #require(videoView(in: window))
@@ -440,6 +537,22 @@ struct ViewerMediaTests {
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
             context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: repeating, keyCode: code))
         window.sendEvent(event)
+    }
+
+    private func click(at point: NSPoint, count: Int, modifiers: NSEvent.ModifierFlags = [],
+                       in window: ViewerWindow) throws {
+        let down = try #require(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: point, modifierFlags: modifiers,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: count, pressure: 1
+        ))
+        let up = try #require(NSEvent.mouseEvent(
+            with: .leftMouseUp, location: point, modifierFlags: modifiers,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: count, pressure: 0
+        ))
+        window.sendEvent(down)
+        window.sendEvent(up)
     }
 
     private func webView(in window: ViewerWindow) -> WebDocView? {
