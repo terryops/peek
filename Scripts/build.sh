@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 APP="$ROOT/build/Peek.app"
-VERSION="${PEEK_VERSION:-1.4.8}"
+VERSION="${PEEK_VERSION:-1.4.9}"
 
 echo "==> 编译"
 if [[ "${PEEK_UNIVERSAL:-0}" == 1 ]]; then

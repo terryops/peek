@@ -593,6 +593,36 @@ struct ViewerSwipeTests {
         }
     }
 
+    @Test func commandCCopiesTheDocumentSelectionAndIgnoresACaret() async throws {
+        try await withViewer(fileCount: 1, document: true, text: "Prefix FixtureCopyProbe Suffix") { _, window in
+            let web = try #require(webDocument(in: window))
+            #expect(!web.hasTextSelection)
+            #expect(window.makeFirstResponder(web))
+            // Observe the native copy action without writing test text to the user's clipboard.
+            _ = try await web.evaluateJavaScript("""
+                document.addEventListener('copy', event => {
+                    event.preventDefault();
+                    document.body.dataset.copied = getSelection().toString();
+                });
+                window.find('FixtureCopyProbe')
+                """)
+            // WebKit publishes the selection to AppKit after the JavaScript call returns.
+            let deadline = Date().addingTimeInterval(2)
+            while !web.hasTextSelection && Date() < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(web.hasTextSelection)
+            let key = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                characters: "c", charactersIgnoringModifiers: "c", isARepeat: false, keyCode: 8))
+            #expect(window.performKeyEquivalent(with: key))
+            let copied = try await web.evaluateJavaScript("document.body.dataset.copied")
+            #expect(copied as? String == "FixtureCopyProbe")
+            _ = try await web.evaluateJavaScript("getSelection().collapseToEnd()")
+            #expect(!web.hasTextSelection)
+        }
+    }
+
     @Test func fittedWebPagesNavigateAndCommandWClosesWithWebFocus() async throws {
         try await withViewer(document: true) { viewer, window in
             swipe(window, x: 0, y: 100)

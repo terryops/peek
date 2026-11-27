@@ -112,6 +112,17 @@ final class WebDocView: WKWebView, WKNavigationDelegate, WKUIDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    var hasTextSelection: Bool {
+        // WebKit exposes the focused frame's selection to macOS Services using the legacy string type.
+        let type = NSPasteboard.PasteboardType("NSStringPboardType")
+        guard validRequestor(forSendType: type, returnType: nil) as? NSView === self else { return false }
+        // Ask for the current text in a private board. A collapsed caret yields an empty string.
+        let selection = NSPasteboard.withUniqueName()
+        defer { selection.releaseGlobally() }
+        return (self as AnyObject).writeSelection?(to: selection, types: [type]) == true
+            && selection.string(forType: .string)?.isEmpty == false
+    }
+
     func pauseMedia() {
         pauseAllMediaPlayback(completionHandler: nil)
         closeAllMediaPresentations(completionHandler: nil)

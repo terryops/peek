@@ -865,7 +865,8 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
 
     func copyCurrent() {
         guard let item else { return }
-        let copied = app?.copy(item.id, only: compare ? nil : index) == true
+        let copied = (main as? ViewerDocumentPage)?.copySelection()
+            ?? (app?.copy(item.id, only: compare ? nil : index) == true)
         let message = copied ? L10n.tr("已拷贝", "Copied") : L10n.tr("拷贝失败", "Copy Failed")
         showFeedback(ViewerFeedback(message: message, symbol: copied ? "checkmark" : "exclamationmark.circle"),
                      timeout: 1.6)
@@ -1184,7 +1185,7 @@ final class ViewerWindow: NSPanel {
     override func sendEvent(_ event: NSEvent) {
         // WebKit and SwiftUI can otherwise consume arrows before the window sees them.
         if event.type == .keyDown {
-            if handleCloseShortcut(event) || handleFullScreenShortcut(event) || viewer?.handleVideoKey(event) == true { return }
+            if handleCommandShortcut(event) || handleFullScreenShortcut(event) || viewer?.handleVideoKey(event) == true { return }
             if [123, 124, 125, 126].contains(event.keyCode),
                event.modifierFlags.intersection([.command, .control]).isEmpty {
                 keyDown(with: event)
@@ -1212,7 +1213,7 @@ final class ViewerWindow: NSPanel {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        handleCloseShortcut(event) || handleFullScreenShortcut(event) || super.performKeyEquivalent(with: event)
+        handleCommandShortcut(event) || handleFullScreenShortcut(event) || super.performKeyEquivalent(with: event)
     }
 
     private func handleFullScreenShortcut(_ event: NSEvent) -> Bool {
@@ -1225,13 +1226,16 @@ final class ViewerWindow: NSPanel {
         return true
     }
 
-    private func handleCloseShortcut(_ event: NSEvent) -> Bool {
+    private func handleCommandShortcut(_ event: NSEvent) -> Bool {
         guard event.type == .keyDown,
               event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command,
               let viewer else { return false }
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        guard key == "w" || (key.isEmpty && event.keyCode == 13) else { return false }
-        viewer.close()
+        switch (key, event.keyCode) {
+        case ("w", _), ("", 13): viewer.close()
+        case ("c", _), ("", 8): viewer.copyCurrent()
+        default: return false
+        }
         return true
     }
 
@@ -1330,7 +1334,7 @@ final class ViewerWindow: NSPanel {
 
     override func keyDown(with e: NSEvent) {
         guard let v = viewer else { return super.keyDown(with: e) }
-        if handleCloseShortcut(e) || v.handleVideoKey(e) { return }
+        if handleCommandShortcut(e) || v.handleVideoKey(e) { return }
         let m = e.modifierFlags.intersection([.command, .option, .control, .shift])
         let cmd = m == .command
         let plain = m.isEmpty || m == .shift
@@ -1344,7 +1348,6 @@ final class ViewerWindow: NSPanel {
         case 126 where m == .option: v.stepCard(-1)                 // ⌥↑ newer card
         case 125 where m == .option: v.stepCard(1)                  // ⌥↓ older card
         case 36 where m.isEmpty, 76 where m.isEmpty, 36 where cmd: v.jumpBack()   // ↩ back to the conversation
-        case 8 where cmd: v.copyCurrent()                           // ⌘C
         case 15 where cmd: v.revealCurrent()                        // ⌘R
         case 2 where cmd: v.toggleCompare()                         // ⌘D
         case 3 where m.isEmpty: v.toggleFullScreen()                // F
@@ -1375,6 +1378,7 @@ private final class ViewerContentView: NSView {
 final class ViewerDocumentPage: NSView {
     let document: NSView
     private var tornDown = false
+    private weak var quickLookTextView: NSTextView?
 
     init(_ document: NSView) {
         self.document = document
@@ -1386,6 +1390,33 @@ final class ViewerDocumentPage: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        // Quick Look installs its read-only text view asynchronously with selection disabled.
+        if document is QLPreviewView, let text = hit as? NSTextView {
+            quickLookTextView = text
+            if !text.isSelectable { text.isSelectable = true }
+        }
+        return hit
+    }
+
+    /// nil means there is no selection and the viewer can copy the file.
+    func copySelection() -> Bool? {
+        if let pdf = document as? PDFView, pdf.currentSelection?.string?.isEmpty == false {
+            pdf.copy(nil)
+            return pdf.document?.allowsCopying == true
+        }
+        if let text = quickLookTextView, text.isDescendant(of: document),
+           text.selectedRanges.contains(where: { $0.rangeValue.length > 0 }) {
+            text.copy(nil)
+            return true
+        }
+        if let web = document as? WebDocView, web.hasTextSelection {
+            return web.tryToPerform(#selector(NSText.copy(_:)), with: nil)
+        }
+        return nil
+    }
 
     func pausePlayback() {
         if let web = document as? WebDocView {
