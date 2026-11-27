@@ -56,6 +56,56 @@ struct ViewerMediaTests {
         }
     }
 
+    @Test func zoomToolbarButtonsControlZoomAndFollowContentType() async throws {
+        try await withFixture(files: [.image("still.png"), .video("clip.mp4"), .audio("clip.wav"), .htmlVideo("doc.html", videoName: "doc.mp4")]) { viewer, window, _ in
+            let zoomLabel = L10n.tr("缩放", "Zoom")
+
+            // Visible for images and triggers zoom in / zoom out.
+            let initialToolbar = try #require(viewer.snapshot()["toolbar"] as? [String])
+            #expect(initialToolbar.contains(zoomLabel))
+            let image = try #require(window.contentView?.subviews.compactMap { $0 as? ZoomImageView }.first)
+            let group = try #require(window.toolbar?.items.compactMap { $0 as? NSToolbarItemGroup }.first { $0.itemIdentifier.rawValue == "zoom" })
+            #expect(group.subitems.count == 2)
+            let target = try #require(group.target as? NSObject)
+            let action = try #require(group.action)
+
+            let startMag = image.magnification
+            group.selectedIndex = 1
+            target.perform(action, with: group)
+            try await waitUntil { image.magnification > startMag * 1.2 }
+            let zoomedIn = image.magnification
+            #expect(zoomedIn > startMag * 1.2)
+
+            group.selectedIndex = 0
+            target.perform(action, with: group)
+            try await waitUntil { image.magnification < zoomedIn * 0.85 }
+            #expect(image.magnification < zoomedIn * 0.85)
+
+            // Hidden for video.
+            viewer.step(1)
+            let videoToolbar = try #require(viewer.snapshot()["toolbar"] as? [String])
+            #expect(!videoToolbar.contains(zoomLabel))
+
+            // Hidden for QuickLook audio.
+            viewer.step(1)
+            let audioToolbar = try #require(viewer.snapshot()["toolbar"] as? [String])
+            #expect(!audioToolbar.contains(zoomLabel))
+
+            // Visible for WebDocView and adjusts pageZoom.
+            viewer.step(1)
+            let webToolbar = try #require(viewer.snapshot()["toolbar"] as? [String])
+            #expect(webToolbar.contains(zoomLabel))
+            let web = try #require(webView(in: window))
+            let startPageZoom = web.pageZoom
+            group.selectedIndex = 1
+            target.perform(action, with: group)
+            #expect(web.pageZoom > startPageZoom)
+            group.selectedIndex = 0
+            target.perform(action, with: group)
+            #expect(abs(web.pageZoom - startPageZoom) < 0.01)
+        }
+    }
+
     @Test func videoControlsAutoHideAndExposeFullScreenSupport() async throws {
         try await withFixture(files: [.video("clip.mp4", seconds: 6)]) { viewer, window, _ in
             #expect(window.collectionBehavior.contains(.fullScreenPrimary))
@@ -71,10 +121,17 @@ struct ViewerMediaTests {
             video.mouseExitHideDelay = 0.08
             video.revealControls()
             #expect(video.controlsStyle == .floating)
+            #expect(!video.areControlsHidden)
 
-            // Auto-hides when idle even while paused.
-            try await waitUntil(timeout: 1) { video.controlsStyle == .none }
-            #expect(video.controlsStyle == .none)
+            // Auto-hides when idle even while paused, keeping .floating so AVKit does not
+            // leave behind an orphaned empty glass container.
+            try await waitUntil(timeout: 1) { video.areControlsHidden }
+            #expect(video.areControlsHidden)
+            #expect(video.controlsStyle == .floating)
+            if let container = video.floatingControlsContainer {
+                try await waitUntil(timeout: 1) { container.isHidden }
+                #expect(container.isHidden)
+            }
 
             // Moving the pointer over the video reveals the floating controls again.
             let center = video.convert(NSPoint(x: video.bounds.midX, y: video.bounds.midY), to: nil)
@@ -84,7 +141,11 @@ struct ViewerMediaTests {
                 context: nil, eventNumber: 0, clickCount: 0, pressure: 0
             ))
             window.sendEvent(moved)
+            #expect(!video.areControlsHidden)
             #expect(video.controlsStyle == .floating)
+            if let container = video.floatingControlsContainer {
+                #expect(!container.isHidden)
+            }
 
             // Leaving the video hides the controls after the short exit delay.
             let exited = try #require(NSEvent.enterExitEvent(
@@ -93,22 +154,26 @@ struct ViewerMediaTests {
                 context: nil, eventNumber: 0, trackingNumber: 0, userData: nil
             ))
             video.mouseExited(with: exited)
-            try await waitUntil(timeout: 1) { video.controlsStyle == .none }
-            #expect(video.controlsStyle == .none)
+            try await waitUntil(timeout: 1) { video.areControlsHidden }
+            #expect(video.areControlsHidden)
+            #expect(video.controlsStyle == .floating)
 
             // Entering AVKit video full screen keeps floating controls available and pauses custom auto-hide.
             video.playerViewWillEnterFullScreen(video)
             #expect(video.isInVideoFullScreen)
+            #expect(!video.areControlsHidden)
             #expect(video.controlsStyle == .floating)
             try await Task.sleep(for: .milliseconds(250))
+            #expect(!video.areControlsHidden)
             #expect(video.controlsStyle == .floating)
 
             // Exiting AVKit video full screen resumes auto-hide.
             video.playerViewDidExitFullScreen(video)
             #expect(!video.isInVideoFullScreen)
+            #expect(!video.areControlsHidden)
+            try await waitUntil(timeout: 1) { video.areControlsHidden }
+            #expect(video.areControlsHidden)
             #expect(video.controlsStyle == .floating)
-            try await waitUntil(timeout: 1) { video.controlsStyle == .none }
-            #expect(video.controlsStyle == .none)
         }
     }
 
@@ -139,10 +204,10 @@ struct ViewerMediaTests {
                 context: nil, eventNumber: 0, clickCount: 0, pressure: 0
             ))
             window.sendEvent(firstMove)
-            #expect(video.controlsStyle == .floating)
+            #expect(!video.areControlsHidden)
 
-            try await waitUntil(timeout: 1) { video.controlsStyle == .none }
-            #expect(video.controlsStyle == .none)
+            try await waitUntil(timeout: 1) { video.areControlsHidden }
+            #expect(video.areControlsHidden)
 
             // A synthetic mouseMoved at the exact same location after hiding must not re-reveal controls.
             let stationaryMove = try #require(NSEvent.mouseEvent(
@@ -151,7 +216,7 @@ struct ViewerMediaTests {
                 context: nil, eventNumber: 1, clickCount: 0, pressure: 0
             ))
             window.sendEvent(stationaryMove)
-            #expect(video.controlsStyle == .none)
+            #expect(video.areControlsHidden)
 
             // Actual pointer movement reveals the controls again.
             let shifted = NSPoint(x: center.x + 12, y: center.y)
@@ -161,7 +226,55 @@ struct ViewerMediaTests {
                 context: nil, eventNumber: 2, clickCount: 0, pressure: 0
             ))
             window.sendEvent(realMove)
+            #expect(!video.areControlsHidden)
+        }
+    }
+
+    @Test func videoAutoHideHidesFloatingControlsContainerAndKeepsItHiddenOnResize() async throws {
+        try await withFixture(files: [.video("clip.mp4", seconds: 6)]) { _, window, _ in
+            let video = try #require(videoView(in: window) as? VideoPlayerView)
+            video.autoHideDelay = 0.12
+
+            // Ensure AVKit instantiates its floating controls container (AVMovableView).
+            if let contentView = video.subviews.first {
+                let sel = NSSelectorFromString("_showControlsWithTrigger:")
+                if let method = class_getInstanceMethod(type(of: contentView), sel) {
+                    typealias TriggerFn = @convention(c) (AnyObject, Selector, Int) -> Void
+                    unsafeBitCast(method_getImplementation(method), to: TriggerFn.self)(contentView, sel, 1)
+                }
+            }
+            window.contentView?.layoutSubtreeIfNeeded()
+            try await waitUntil(timeout: 1) { video.floatingControlsContainer != nil }
+            let container = try #require(video.floatingControlsContainer)
+            #expect(!container.isHidden)
+
+            // Idle auto-hide must hide the entire floating container (including its glass backdrop)
+            // without switching controlsStyle to .none.
+            video.revealControls()
+            try await waitUntil(timeout: 1) { video.areControlsHidden && container.isHidden }
+            #expect(video.areControlsHidden)
             #expect(video.controlsStyle == .floating)
+            #expect(container.isHidden)
+
+            // Resizing the window must not make AVKit unhide the hidden floating container.
+            var frame = window.frame
+            frame.size.width += 80
+            window.setFrame(frame, display: false)
+            window.contentView?.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(150))
+            #expect(video.areControlsHidden)
+            #expect(container.isHidden)
+
+            // Moving the pointer reveals the floating container again.
+            let center = video.convert(NSPoint(x: video.bounds.midX, y: video.bounds.midY), to: nil)
+            let move = try #require(NSEvent.mouseEvent(
+                with: .mouseMoved, location: center, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 3, clickCount: 0, pressure: 0
+            ))
+            window.sendEvent(move)
+            #expect(!video.areControlsHidden)
+            #expect(!container.isHidden)
         }
     }
 

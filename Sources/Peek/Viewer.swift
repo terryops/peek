@@ -719,6 +719,10 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
         return true
     }
 
+    private var supportsZoom: Bool {
+        compare || main is ZoomImageView || displayedContent is WebDocView || displayedContent is PDFView
+    }
+
     func zoom(_ action: ZoomImageView.Action) {
         window?.cancelSwipeTracking()
         cancelSwipeAnimation()
@@ -930,6 +934,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
 
     private enum ID {
         static let nav = NSToolbarItem.Identifier("nav")
+        static let zoom = NSToolbarItem.Identifier("zoom")
         static let compare = NSToolbarItem.Identifier("compare")
         static let fullScreen = NSToolbarItem.Identifier("fullScreen")
         static let copy = NSToolbarItem.Identifier("copy")
@@ -939,7 +944,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, ID.nav, ID.compare, ID.fullScreen, ID.copy, ID.share, ID.reveal, ID.jump]
+        [.flexibleSpace, ID.nav, ID.zoom, ID.compare, ID.fullScreen, ID.copy, ID.share, ID.reveal, ID.jump]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -958,6 +963,20 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
                 target: self, action: #selector(navTapped(_:))
             )
             group.label = L10n.tr("切换", "Navigate")
+            return group
+        case ID.zoom:
+            let labels = [L10n.tr("缩小  ⌘-", "Zoom Out  ⌘-"), L10n.tr("放大  ⌘=", "Zoom In  ⌘=")]
+            let group = NSToolbarItemGroup(
+                itemIdentifier: id,
+                images: [symbol("minus.magnifyingglass"), symbol("plus.magnifyingglass")],
+                selectionMode: .momentary,
+                labels: labels,
+                target: self, action: #selector(zoomTapped(_:))
+            )
+            group.label = L10n.tr("缩放", "Zoom")
+            for (subitem, label) in zip(group.subitems, labels) {
+                subitem.toolTip = label
+            }
             return group
         case ID.compare:
             return button(id, "rectangle.split.2x1", L10n.tr("并排对比", "Compare"), #selector(compareTapped))
@@ -1024,6 +1043,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
             let multi = (item?.files.count ?? 0) > 1
             var wanted: [NSToolbarItem.Identifier] = [.flexibleSpace]
             if multi && !compare { wanted.append(ID.nav) }
+            if supportsZoom { wanted.append(ID.zoom) }
             if multi && item?.allImages == true { wanted.append(ID.compare) }
             wanted.append(contentsOf: [ID.fullScreen, ID.copy, ID.share, ID.reveal])
             if item?.origin?.canJump ?? false { wanted.append(ID.jump) }
@@ -1043,6 +1063,16 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
         case ID.nav:
             setToolbarItemHidden(t, !multi || compare)
             t.label = L10n.tr("切换", "Navigate")
+        case ID.zoom:
+            setToolbarItemHidden(t, !supportsZoom)
+            t.label = L10n.tr("缩放", "Zoom")
+            if let group = t as? NSToolbarItemGroup, group.subitems.count == 2 {
+                let labels = [L10n.tr("缩小  ⌘-", "Zoom Out  ⌘-"), L10n.tr("放大  ⌘=", "Zoom In  ⌘=")]
+                for (subitem, label) in zip(group.subitems, labels) {
+                    subitem.label = label
+                    subitem.toolTip = label
+                }
+            }
         case ID.compare:
             setToolbarItemHidden(t, !multi || item?.allImages != true)
             t.image = NSImage(systemSymbolName: compare ? "square" : "rectangle.split.2x1", accessibilityDescription: nil)
@@ -1082,6 +1112,7 @@ final class Viewer: NSObject, NSWindowDelegate, NSToolbarDelegate, NSSharingServ
     }
 
     @objc private func navTapped(_ sender: NSToolbarItemGroup) { step(sender.selectedIndex == 0 ? -1 : 1) }
+    @objc private func zoomTapped(_ sender: NSToolbarItemGroup) { zoom(sender.selectedIndex == 0 ? .zoomOut : .zoomIn) }
     @objc private func compareTapped() { toggleCompare() }
     @objc private func fullScreenTapped() { toggleFullScreen() }
     @objc private func copyTapped() { copyCurrent() }
@@ -1391,7 +1422,11 @@ final class VideoPlayerView: AVPlayerView, AVPlayerViewDelegate {
     private var hideTimer: Timer?
     private var pointerTrackingArea: NSTrackingArea?
     private var lastPointerLocation: NSPoint?
+    private var controlsHiddenObservation: NSKeyValueObservation?
+    private weak var observedControlsView: NSView?
+    private var visibilityGeneration = 0
     private(set) var isInVideoFullScreen = false
+    private(set) var areControlsHidden = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1404,6 +1439,12 @@ final class VideoPlayerView: AVPlayerView, AVPlayerViewDelegate {
 
     deinit {
         hideTimer?.invalidate()
+        controlsHiddenObservation?.invalidate()
+    }
+
+    override func layout() {
+        super.layout()
+        syncFloatingControlsVisibility()
     }
 
     override func updateTrackingAreas() {
@@ -1450,8 +1491,8 @@ final class VideoPlayerView: AVPlayerView, AVPlayerViewDelegate {
     }
 
     func notePointerMove(at pointInView: NSPoint) {
-        // Removing floating controls can synthesize a mouseMoved/mouseEntered at the same point.
-        if controlsStyle == .none, let last = lastPointerLocation,
+        // Hiding floating controls can synthesize a mouseMoved/mouseEntered at the same point.
+        if areControlsHidden, let last = lastPointerLocation,
            hypot(pointInView.x - last.x, pointInView.y - last.y) < 2 {
             return
         }
@@ -1487,6 +1528,7 @@ final class VideoPlayerView: AVPlayerView, AVPlayerViewDelegate {
     func revealControls(autoHide: Bool = true) {
         cancelAutoHide()
         if controlsStyle != .floating { controlsStyle = .floating }
+        setControlsHidden(false, animated: true)
         if autoHide && !isInVideoFullScreen {
             scheduleAutoHide(after: autoHideDelay)
         }
@@ -1494,8 +1536,99 @@ final class VideoPlayerView: AVPlayerView, AVPlayerViewDelegate {
 
     func teardown() {
         cancelAutoHide()
+        controlsHiddenObservation?.invalidate()
+        controlsHiddenObservation = nil
+        observedControlsView = nil
         player?.pause()
         player = nil
+    }
+
+    /// Locates AVKit's floating controls container (e.g. `AVMovableView`) without touching video/Live Text subviews.
+    var floatingControlsContainer: NSView? {
+        findFloatingControlsContainer(in: self)
+    }
+
+    private func findFloatingControlsContainer(in view: NSView) -> NSView? {
+        for subview in view.subviews {
+            let className = NSStringFromClass(type(of: subview))
+            if className.contains("PlaybackContentContainer") || className.hasPrefix("VK") {
+                continue
+            }
+            if className.contains("AVMovableView")
+                || className.contains("FloatingPlaybackControls")
+                || className.contains("ControlsContainer") {
+                return subview
+            }
+            if let found = findFloatingControlsContainer(in: subview) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private func observeControlsViewIfNeeded(_ controlsView: NSView) {
+        guard observedControlsView !== controlsView else { return }
+        controlsHiddenObservation?.invalidate()
+        observedControlsView = controlsView
+        controlsHiddenObservation = controlsView.observe(\.isHidden, options: [.new]) { [weak self] view, _ in
+            guard let self, self.areControlsHidden, !view.isHidden else { return }
+            view.alphaValue = 0
+            view.isHidden = true
+        }
+    }
+
+    private func syncFloatingControlsVisibility() {
+        guard let controlsView = floatingControlsContainer else { return }
+        observeControlsViewIfNeeded(controlsView)
+        if areControlsHidden {
+            controlsView.alphaValue = 0
+            if !controlsView.isHidden { controlsView.isHidden = true }
+        }
+    }
+
+    private func setControlsHidden(_ hidden: Bool, animated: Bool) {
+        let changed = areControlsHidden != hidden
+        areControlsHidden = hidden
+        guard let controlsView = floatingControlsContainer else { return }
+        observeControlsViewIfNeeded(controlsView)
+
+        visibilityGeneration &+= 1
+        let gen = visibilityGeneration
+        let shouldAnimate = animated && changed && !Anim.reduceMotion && window != nil
+
+        if hidden {
+            guard !controlsView.isHidden else {
+                controlsView.alphaValue = 0
+                return
+            }
+            if shouldAnimate {
+                NSAnimationContext.runAnimationGroup({ ctx in
+                    ctx.duration = 0.18
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    controlsView.animator().alphaValue = 0
+                }, completionHandler: { [weak self, weak controlsView] in
+                    Task { @MainActor in
+                        guard let self, self.visibilityGeneration == gen, self.areControlsHidden else { return }
+                        controlsView?.alphaValue = 0
+                        controlsView?.isHidden = true
+                    }
+                })
+            } else {
+                controlsView.alphaValue = 0
+                controlsView.isHidden = true
+            }
+        } else {
+            controlsView.isHidden = false
+            if shouldAnimate {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.14
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    controlsView.animator().alphaValue = 1
+                }
+            } else {
+                controlsView.alphaValue = 1
+            }
+        }
     }
 
     private func cancelAutoHide() {
@@ -1535,13 +1668,16 @@ final class VideoPlayerView: AVPlayerView, AVPlayerViewDelegate {
                 lastPointerLocation = point
             }
         }
-        if controlsStyle != .none { controlsStyle = .none }
+        // Keep controlsStyle = .floating instead of switching to .none; toggling to .none on macOS
+        // tears down the inner buttons while leaving an empty NSGlassView shell visible on screen.
+        setControlsHidden(true, animated: true)
     }
 
     func playerViewWillEnterFullScreen(_ playerView: AVPlayerView) {
         isInVideoFullScreen = true
         cancelAutoHide()
         if controlsStyle != .floating { controlsStyle = .floating }
+        setControlsHidden(false, animated: false)
     }
 
     func playerViewDidExitFullScreen(_ playerView: AVPlayerView) {
